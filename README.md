@@ -98,10 +98,17 @@ Pub/sub delivery frame (server → subscriber): `[0x00] | [len u32] | [payload]`
 
 ## Configuration
 
+All runtime settings live in `.env` (copy from [`.env.example`](.env.example)) — no code changes needed, like `redis.conf`.
+
 | Env var | Default | Meaning |
 |---------|---------|---------|
+| `PICODB_BIND` | `127.0.0.1` | Bind address. `0.0.0.0` exposes on all interfaces (public). |
+| `PICODB_ENGINE_PORT` | `7120` | TCP port for the raw binary engine. |
+| `PICODB_HTTP_PORT` | `7121` | TCP port for the dashboard / metrics / API / WebSocket. |
 | `PICODB_TOKEN` | *(unset)* | Shared access token. Set → auth enforced on all surfaces. Unset → auth disabled (loopback dev). |
 | `PICODB_MAX_BYTES` | `52428800` (50 MiB) | Hard RAM cap; oldest keys evicted (LRU) past it. |
+
+> Exposing publicly (`PICODB_BIND=0.0.0.0`)? Always set `PICODB_TOKEN`, open the port in your host/cloud firewall, and put TLS in front (reverse proxy) — traffic is otherwise plaintext.
 
 ## Security
 

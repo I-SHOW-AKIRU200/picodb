@@ -79,8 +79,8 @@ const MAX_FRAME_BODY: usize = 64 * 1024 * 1024;
 /// Reusable per-connection stack buffer size, as specified.
 const READ_BUF: usize = 4096;
 
-const PORT_ENGINE: u16 = 7120;
-const PORT_HTTP: u16 = 7121;
+const DEFAULT_PORT_ENGINE: u16 = 7120;
+const DEFAULT_PORT_HTTP: u16 = 7121;
 
 /// Current UNIX time in whole seconds (monotonic-enough for TTL accounting).
 #[inline]
@@ -1128,11 +1128,27 @@ fn config_token() -> Option<Vec<u8>> {
     }
 }
 
+/// Address to bind both listeners to. Defaults to loopback (`127.0.0.1`) — the
+/// security boundary. Set `PICODB_BIND=0.0.0.0` to expose on all interfaces
+/// (only do this with `PICODB_TOKEN` set, and ideally TLS via a reverse proxy).
+fn config_bind() -> String {
+    env::var("PICODB_BIND").unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+/// Parse a `u16` port from `var`, falling back to `default` when unset/invalid.
+fn config_port(var: &str, default: u16) -> u16 {
+    env::var(var).ok().and_then(|v| v.parse::<u16>().ok()).unwrap_or(default)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cap = config_cap();
     let auth = config_token();
-    let auth_status = if auth.is_some() {
+    let bind = config_bind();
+    let port_engine = config_port("PICODB_ENGINE_PORT", DEFAULT_PORT_ENGINE);
+    let port_http = config_port("PICODB_HTTP_PORT", DEFAULT_PORT_HTTP);
+    let auth_enabled = auth.is_some();
+    let auth_status = if auth_enabled {
         "enabled"
     } else {
         "DISABLED (set PICODB_TOKEN)"
@@ -1143,11 +1159,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // inside, so a blocking lock is faster and never starves the runtime.
     let server = Arc::new(Server::new(cap, auth));
 
-    let engine = TcpListener::bind(("127.0.0.1", PORT_ENGINE)).await?;
-    let http = TcpListener::bind(("127.0.0.1", PORT_HTTP)).await?;
+    let engine = TcpListener::bind((bind.as_str(), port_engine)).await?;
+    let http = TcpListener::bind((bind.as_str(), port_http)).await?;
+
+    // Loud warning when exposed on a non-loopback address without auth.
+    if bind != "127.0.0.1" && bind != "localhost" && !auth_enabled {
+        eprintln!("WARNING: bound to {bind} with auth DISABLED — anyone who can reach this host has full access. Set PICODB_TOKEN.");
+    }
 
     eprintln!(
-        "PicoDB up — engine :{PORT_ENGINE} (binary) · dashboard http://127.0.0.1:{PORT_HTTP}/ · RAM cap {} MiB · auth: {auth_status}",
+        "PicoDB up — engine {bind}:{port_engine} (binary) · dashboard http://{bind}:{port_http}/ · RAM cap {} MiB · auth: {auth_status}",
         cap / (1024 * 1024)
     );
 

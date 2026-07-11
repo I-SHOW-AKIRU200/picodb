@@ -7,6 +7,10 @@
 # Compiled benchmark helper
 /bench/loadgen
 
+# Runtime logs
+*.out
+picodb.out
+
 # Editor/OS noise
 *.swp
 .DS_Store
