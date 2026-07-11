@@ -18,12 +18,9 @@ fi
 
 cd "$DIR"
 
-# Run setup with a real terminal for the Rust-install prompt when piped to bash.
-if [ -r /dev/tty ]; then
-  ./picodb setup < /dev/tty
-else
-  ./picodb setup
-fi
+# Non-interactive setup (piped installs have no terminal to prompt on):
+# PICODB_ASSUME_YES=1 makes ./picodb auto-install Rust if it's missing.
+PICODB_ASSUME_YES=1 ./picodb setup </dev/null
 
 echo ""
 echo "PicoDB installed in ./$DIR"

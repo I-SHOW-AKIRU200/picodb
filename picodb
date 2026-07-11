@@ -56,14 +56,22 @@ do_setup() {
   say "Checking Rust toolchain…"
   have_cargo || load_cargo_env
   if ! have_cargo; then
-    warn "Rust (cargo) not found."
-    printf 'Install the official Rust toolchain via rustup now? [y/N] '
-    read -r ans || ans=""
-    case "$ans" in
-      y|Y) curl -sSf --proto '=https' --tlsv1.2 https://sh.rustup.rs | sh -s -- -y --profile minimal
-           load_cargo_env ;;
-      *)   printf '%sRust is required. See https://rustup.rs%s\n' "$C_RD" "$C_RESET"; return 1 ;;
-    esac
+    # Auto-install without prompting when PICODB_ASSUME_YES=1 (used by the
+    # curl|bash installer) or when there's no terminal to prompt on.
+    if [ "${PICODB_ASSUME_YES:-}" = "1" ] || [ ! -t 0 ]; then
+      say "Installing Rust toolchain (rustup, non-interactive)…"
+      curl -sSf --proto '=https' --tlsv1.2 https://sh.rustup.rs | sh -s -- -y --profile minimal
+      load_cargo_env
+    else
+      warn "Rust (cargo) not found."
+      printf 'Install the official Rust toolchain via rustup now? [y/N] '
+      read -r ans || ans=""
+      case "$ans" in
+        y|Y) curl -sSf --proto '=https' --tlsv1.2 https://sh.rustup.rs | sh -s -- -y --profile minimal
+             load_cargo_env ;;
+        *)   printf '%sRust is required. See https://rustup.rs%s\n' "$C_RD" "$C_RESET"; return 1 ;;
+      esac
+    fi
   fi
   ok "cargo present: $(cargo --version)"
 
