@@ -1,21 +1,20 @@
-# PicoDB — thin wrappers around the setup/build/run scripts.
+# PicoDB — thin wrappers around the ./picodb CLI.
 .PHONY: setup build run test bench clean
 
 setup:            ## Install Rust (if needed), build, generate .env token
-	./setup.sh
+	./picodb setup
 
 build:            ## Compile the release binary
 	cargo build --release
 
 run: build        ## Start PicoDB (loads .env)
-	./run.sh
+	./picodb run
 
-test: build       ## Build then run the Python integration tests
-	python3 tests/test_picodb.py
+test: build       ## Run the Python integration tests
+	./picodb test
 
-bench: build      ## Compile and run the native load generator
-	rustc -O bench/loadgen.rs -o bench/loadgen
-	@echo "Start the server (./run.sh) in another shell, then: ./bench/loadgen 4 4000000 1000"
+bench:            ## Compile the native load generator
+	./picodb bench
 
 clean:            ## Remove build artifacts
 	cargo clean

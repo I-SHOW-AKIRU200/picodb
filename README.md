@@ -12,10 +12,21 @@ An ultra-low-latency, **zero-dependency** in-memory key/value cache in Rust — 
 ## One-line install & run
 
 ```bash
-git clone https://github.com/USERNAME/picodb && cd picodb && ./setup.sh && ./run.sh
+git clone https://github.com/I-SHOW-AKIRU200/picodb && cd picodb && ./picodb
 ```
 
-`setup.sh` installs Rust if needed, builds the release binary, and generates a random access token into `.env` (auth **on** by default). `run.sh` loads `.env` and starts the server. Then open the dashboard at **http://127.0.0.1:7121/** and paste the token from `.env` when prompted.
+`./picodb` opens an interactive CLI (ASCII logo + arrow-key menu) that can **Setup** (install Rust if needed, build, and generate a random access token into `.env` — auth **on** by default), **Start** the server, **Test**, **Benchmark**, and **Regenerate token**. Then open the dashboard at **http://127.0.0.1:7121/** and paste the token from `.env` when prompted.
+
+It's also fully scriptable:
+
+```bash
+./picodb setup     # install Rust (if needed), build, generate token
+./picodb run       # start the server (loads .env)
+./picodb test      # run integration tests
+./picodb bench     # build the native load generator
+./picodb status    # build/auth/config status
+./picodb token     # regenerate the access token
+```
 
 Prefer `make`? `make setup && make run`.
 
@@ -89,10 +100,11 @@ Pub/sub delivery frame (server → subscriber): `[0x00] | [len u32] | [payload]`
 ## Development
 
 ```bash
-make build     # compile release binary
-make run       # start (loads .env)
-make test      # run the Python integration tests
-make bench     # build the native load generator
+./picodb        # interactive menu
+make build      # compile release binary
+make run        # start (loads .env)
+make test       # run the Python integration tests
+make bench      # build the native load generator
 make clean
 ```
 
