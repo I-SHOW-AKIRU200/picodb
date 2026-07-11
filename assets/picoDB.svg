@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000">
+  <rect width="1000" height="1000" fill="#ffffff"/>
+
+  <!-- Mark: traced from source image, scaled and centered horizontally, positioned in upper portion -->
+  <g transform="translate(-33.83, -52.70) scale(0.5934718)">
+    <path fill="#17454c" fill-rule="evenodd"
+          d="M 1405 291 L 1338 291 L 1337 600 L 1109 473 L 937 553 L 991 601 L 1105 546 L 1335 679 L 1337 860 L 1098 993 L 898 879 L 877 825 L 878 693 L 822 647 L 809 840 L 867 945 L 1113 1065 L 1392 904 Z
+             M 933 594 L 691 473 L 406 640 L 394 1228 L 460 1228 L 462 941 L 689 1065 L 863 984 L 810 937 L 696 993 L 468 864 L 461 684 L 704 547 L 900 661 L 923 727 L 920 854 L 979 889 L 990 699 Z"/>
+  </g>
+
+  <!-- PicoDB wordmark, centered below the mark -->
+  <g fill="#17454c" font-family="Arial, Helvetica, sans-serif" font-weight="700">
+    <text x="500" y="820" text-anchor="middle" font-size="120" letter-spacing="-2">PicoDB</text>
+  </g>
+</svg>

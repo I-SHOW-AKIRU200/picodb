@@ -1,6 +1,17 @@
-# PicoDB
+<p align="center">
+  <img src="assets/picoDB.svg" alt="PicoDB" width="220" />
+</p>
 
-An ultra-low-latency, **zero-dependency** in-memory key/value cache in Rust — a lightweight, single-binary alternative to Redis for volatile storage.
+<h1 align="center">PicoDB</h1>
+
+<p align="center">
+  An ultra-low-latency, <b>zero-dependency</b> in-memory key/value cache in Rust —<br/>
+  a lightweight, single-binary alternative to Redis for volatile storage.
+</p>
+
+<p align="center"><i>Created by AKIRU</i></p>
+
+---
 
 - **Tiny**: ~2.3 MB idle RAM, ~540 KB stripped binary.
 - **Fast**: ~16–22 µs GET latency and **3.2M+ pipelined ops/s** on loopback (beats Redis latency in local tests).
@@ -23,7 +34,13 @@ curl -fsSL https://raw.githubusercontent.com/I-SHOW-AKIRU200/picodb/main/install
 git clone https://github.com/I-SHOW-AKIRU200/picodb.git && cd picodb && ./picodb
 ```
 
-`./picodb` opens an interactive CLI (ASCII logo + arrow-key menu) that can **Setup** (install Rust if needed, build, and generate a random access token into `.env` — auth **on** by default), **Start** the server, **Test**, **Benchmark**, and **Regenerate token**. After install, start the server and open the dashboard at **http://127.0.0.1:7121/**, pasting the token from `.env` when prompted:
+`./picodb` opens an interactive CLI (ASCII logo + arrow-key menu) that can **Setup** (install Rust if needed, build, and generate a random access token into `.env` — auth **on** by default), **Start** the server, **Test**, **Benchmark**, and **Regenerate token**.
+
+<p align="center">
+  <img src="assets/preview.jpg" alt="PicoDB CLI" width="720" />
+</p>
+
+After install, start the server and open the dashboard at **http://127.0.0.1:7121/**, pasting the token from `.env` when prompted:
 
 ```bash
 cd picodb && ./picodb run
