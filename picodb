@@ -7,6 +7,8 @@
 #   ./picodb bench      build the native load generator
 #   ./picodb status     show build/auth/config status
 #   ./picodb token      regenerate the access token
+#
+# PicoDB — created by AKIRU
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -23,33 +25,32 @@ fi
 logo() {
   printf '%s\n' "${C_BL}"
   cat <<'ART'
- ██████╗ ██╗ ██████╗ ██████╗ ██████╗ ██████╗
- ██╔══██╗██║██╔════╝██╔═══██╗██╔══██╗██╔══██╗
- ██████╔╝██║██║     ██║   ██║██║  ██║██████╔╝
- ██╔═══╝ ██║██║     ██║   ██║██║  ██║██╔══██╗
- ██║     ██║╚██████╗╚██████╔╝██████╔╝██████╔╝
- ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚═════╝
+   ██████╗ ██╗ ██████╗ ██████╗ ██████╗ ██████╗
+   ██╔══██╗██║██╔════╝██╔═══██╗██╔══██╗██╔══██╗
+   ██████╔╝██║██║     ██║   ██║██║  ██║██████╔╝
+   ██╔═══╝ ██║██║     ██║   ██║██║  ██║██╔══██╗
+   ██║     ██║╚██████╗╚██████╔╝██████╔╝██████╔╝
+   ╚═╝     ╚═╝ ╚═════╝ ╚═════╝ ╚═════╝ ╚═════╝
 ART
   printf '%s' "${C_RESET}"
-  printf '   %sultra-low-latency in-memory cache%s  %s· engine :7120 · dashboard :7121%s\n\n' \
-    "${C_DIM}" "${C_RESET}" "${C_DIM}" "${C_RESET}"
+  printf '   %sultra-low-latency in-memory cache%s   %sby AKIRU%s\n\n' \
+    "${C_DIM}" "${C_RESET}" "${C_CY}" "${C_RESET}"
 }
 
-pause() { printf '\n%sPress Enter to continue…%s' "$C_DIM" "$C_RESET"; read -r _ || true; }
-say()   { printf '%s==>%s %s\n' "$C_CY" "$C_RESET" "$*"; }
-ok()    { printf '%s ✓ %s%s\n' "$C_GR" "$C_RESET" "$*"; }
-warn()  { printf '%s ! %s%s\n' "$C_YE" "$C_RESET" "$*"; }
+rule() { printf '   %s────────────────────────────────────────────────%s\n' "$C_DIM" "$C_RESET"; }
+
+pause() { printf '\n   %sPress Enter to go back to the menu…%s' "$C_DIM" "$C_RESET"; read -r _ || true; }
+say()   { printf '   %s==>%s %s\n' "$C_CY" "$C_RESET" "$*"; }
+ok()    { printf '   %s✓%s %s\n' "$C_GR" "$C_RESET" "$*"; }
+warn()  { printf '   %s!%s %s\n' "$C_YE" "$C_RESET" "$*"; }
 
 have_cargo() { command -v cargo >/dev/null 2>&1; }
 load_cargo_env() { [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env" || true; }
 
 gen_token() { head -c 32 /dev/urandom | base64 | tr -d '/+=' | cut -c1-40; }
-
-read_token() { [ -f .env ] && grep -E '^PICODB_TOKEN=' .env | cut -d= -f2- || true; }
-
-load_env() {
-  if [ -f .env ]; then set -a; . ./.env; set +a; fi
-}
+read_token() { [ -f .env ] && grep -E '^PICODB_TOKEN=' .env | cut -d= -f2- | tail -1 || true; }
+env_val() { [ -f .env ] && grep -E "^$1=" .env | cut -d= -f2- | tail -1 || true; }
+load_env() { if [ -f .env ]; then set -a; . ./.env; set +a; fi; }
 
 # ---- actions ---------------------------------------------------------------
 do_setup() {
@@ -64,40 +65,48 @@ do_setup() {
       load_cargo_env
     else
       warn "Rust (cargo) not found."
-      printf 'Install the official Rust toolchain via rustup now? [y/N] '
+      printf '   Install the official Rust toolchain via rustup now? [y/N] '
       read -r ans || ans=""
       case "$ans" in
         y|Y) curl -sSf --proto '=https' --tlsv1.2 https://sh.rustup.rs | sh -s -- -y --profile minimal
              load_cargo_env ;;
-        *)   printf '%sRust is required. See https://rustup.rs%s\n' "$C_RD" "$C_RESET"; return 1 ;;
+        *)   printf '   %sRust is required. See https://rustup.rs%s\n' "$C_RD" "$C_RESET"; return 1 ;;
       esac
     fi
   fi
-  ok "cargo present: $(cargo --version)"
+  ok "Rust ready: $(cargo --version | awk '{print $1, $2}')"
 
   say "Building release binary…"
   cargo build --release
   ok "Built $BIN"
 
   if [ ! -f .env ]; then
-    { echo "PICODB_TOKEN=$(gen_token)"; echo "PICODB_MAX_BYTES=52428800"; } > .env
-    ok "Generated .env with a fresh random token (auth ENABLED)"
+    { echo "PICODB_BIND=127.0.0.1"; echo "PICODB_ENGINE_PORT=7120"; echo "PICODB_HTTP_PORT=7121"; \
+      echo "PICODB_TOKEN=$(gen_token)"; echo "PICODB_MAX_BYTES=52428800"; } > .env
+    ok "Created .env with a fresh random access token (auth ENABLED)"
   else
     warn ".env already exists — left untouched"
   fi
-  printf '\n%sSetup complete.%s Choose “Start server”, then open %shttp://127.0.0.1:7121/%s\n' \
+  printf '\n   %sSetup complete!%s Pick %s2) Start server%s, then open the dashboard.\n' \
     "$C_GR" "$C_RESET" "$C_B" "$C_RESET"
 }
 
-ensure_built() { [ -x "$BIN" ] || { warn "Not built yet — running setup."; do_setup; }; }
+ensure_built() { [ -x "$BIN" ] || { warn "Not built yet — running Setup first."; do_setup; }; }
 
 do_run_exec() { load_env; ensure_built; exec "$BIN"; }   # subcommand: replace shell
 
 do_run_menu() {                                          # menu: return on Ctrl-C
   load_env; ensure_built
-  local tok; tok="$(read_token)"
-  if [ -n "$tok" ]; then ok "auth ENABLED — dashboard token is in .env"; else warn "auth DISABLED (no token)"; fi
-  printf '%sStarting PicoDB — press Ctrl-C to stop and return to the menu.%s\n\n' "$C_DIM" "$C_RESET"
+  local tok bind http; tok="$(read_token)"
+  bind="$(env_val PICODB_BIND)"; bind="${bind:-127.0.0.1}"
+  http="$(env_val PICODB_HTTP_PORT)"; http="${http:-7121}"
+  if [ -n "$tok" ]; then
+    ok "auth ENABLED — your access token is in the .env file"
+  else
+    warn "auth DISABLED — no token set (anyone can connect)"
+  fi
+  printf '   %sDashboard:%s http://%s:%s/\n' "$C_B" "$C_RESET" "$bind" "$http"
+  printf '   %sStop the server with Ctrl-C to return to this menu.%s\n\n' "$C_DIM" "$C_RESET"
   trap ':' INT           # ignore SIGINT in the CLI; the child receives it
   "$BIN" || true
   trap - INT
@@ -107,7 +116,7 @@ do_run_menu() {                                          # menu: return on Ctrl-
 do_test() {
   ensure_built
   local tok; tok="$(read_token)"
-  say "Starting a temporary server for tests…"
+  say "Starting a temporary server and running the test suite…"
   load_env; "$BIN" >/tmp/picodb_test.log 2>&1 &
   local pid=$!; sleep 1.2
   PICODB_TOKEN="$tok" python3 tests/test_picodb.py || true
@@ -116,31 +125,51 @@ do_test() {
 
 do_bench() {
   have_cargo || load_cargo_env
-  say "Compiling native load generator…"
+  say "Compiling the native load generator…"
   rustc -O bench/loadgen.rs -o bench/loadgen
   ok "Built bench/loadgen"
-  printf 'Start the server first, then run: %s./bench/loadgen 4 4000000 1000%s\n' "$C_B" "$C_RESET"
+  printf '   Start the server first, then run: %s./bench/loadgen 4 4000000 1000%s\n' "$C_B" "$C_RESET"
 }
 
 do_status() {
-  printf '%sStatus%s\n' "$C_B" "$C_RESET"
-  [ -x "$BIN" ] && ok "binary built ($(du -h "$BIN" | cut -f1))" || warn "binary not built — run Setup"
-  if [ -f .env ]; then
-    [ -n "$(read_token)" ] && ok "auth ENABLED (token in .env)" || warn "auth DISABLED"
-    local cap; cap=$(grep -E '^PICODB_MAX_BYTES=' .env | cut -d= -f2- || echo "")
-    [ -n "$cap" ] && printf '    RAM cap : %s bytes\n' "$cap"
+  local L='%s%-11s%s'   # label column
+  printf '   %sSTATUS%s\n' "$C_B" "$C_RESET"
+
+  if [ -x "$BIN" ]; then
+    printf "   $L%s✓%s compiled (%s)\n" "$C_DIM" "Build" "$C_RESET" "$C_GR" "$C_RESET" "$(du -h "$BIN"|cut -f1)"
   else
-    warn "no .env — run Setup to create one"
+    printf "   $L%s✗%s not built yet — choose %sSetup%s\n" "$C_DIM" "Build" "$C_RESET" "$C_YE" "$C_RESET" "$C_B" "$C_RESET"
   fi
-  pgrep -x picodb >/dev/null 2>&1 && ok "server RUNNING" || printf '    server : %sstopped%s\n' "$C_DIM" "$C_RESET"
-  printf '    engine : 127.0.0.1:7120   dashboard : http://127.0.0.1:7121/\n'
+
+  if [ -f .env ]; then
+    if [ -n "$(read_token)" ]; then
+      printf "   $L%s✓%s enabled (token in .env)\n" "$C_DIM" "Auth" "$C_RESET" "$C_GR" "$C_RESET"
+    else
+      printf "   $L%s!%s disabled (no password set)\n" "$C_DIM" "Auth" "$C_RESET" "$C_YE" "$C_RESET"
+    fi
+    local cap; cap="$(env_val PICODB_MAX_BYTES)"; cap="${cap:-52428800}"
+    printf "   $L%s MiB cap\n" "$C_DIM" "Memory" "$C_RESET" "$((cap/1024/1024))"
+  else
+    printf "   $L%s!%s no .env yet — choose %sSetup%s\n" "$C_DIM" "Config" "$C_RESET" "$C_YE" "$C_RESET" "$C_B" "$C_RESET"
+  fi
+
+  local bind http eng
+  bind="$(env_val PICODB_BIND)"; bind="${bind:-127.0.0.1}"
+  http="$(env_val PICODB_HTTP_PORT)"; http="${http:-7121}"
+  eng="$(env_val PICODB_ENGINE_PORT)"; eng="${eng:-7120}"
+  if pgrep -x picodb >/dev/null 2>&1; then
+    printf "   $L%s●%s running\n" "$C_DIM" "Server" "$C_RESET" "$C_GR" "$C_RESET"
+  else
+    printf "   $L%s○%s stopped\n" "$C_DIM" "Server" "$C_RESET" "$C_DIM" "$C_RESET"
+  fi
+  printf "   $L%s\n" "$C_DIM" "Dashboard" "$C_RESET" "http://$bind:$http/"
+  printf "   $L%s (binary protocol)\n" "$C_DIM" "Engine" "$C_RESET" "$bind:$eng"
 }
 
 do_token() {
   local new; new="$(gen_token)"
   if [ -f .env ]; then
     if grep -qE '^PICODB_TOKEN=' .env; then
-      # portable in-place edit
       tmp=$(mktemp); sed "s|^PICODB_TOKEN=.*|PICODB_TOKEN=$new|" .env > "$tmp" && mv "$tmp" .env
     else
       echo "PICODB_TOKEN=$new" >> .env
@@ -148,12 +177,13 @@ do_token() {
   else
     { echo "PICODB_TOKEN=$new"; echo "PICODB_MAX_BYTES=52428800"; } > .env
   fi
-  ok "New token written to .env (restart the server to apply)"
+  ok "New access token saved to .env"
+  warn "Restart the server for it to take effect."
 }
 
 usage() {
   cat <<EOF
-${C_B}PicoDB CLI${C_RESET}
+${C_B}PicoDB CLI${C_RESET} — by AKIRU
   ./picodb            interactive menu
   ./picodb setup      install Rust (if needed), build, generate token
   ./picodb run        start the server (loads .env)
@@ -165,21 +195,28 @@ EOF
 }
 
 # ---- interactive arrow-key menu -------------------------------------------
+# Each entry is "label<TAB>description" — the description explains what it does.
 MENU_OPTIONS=(); MENU_SEL=0
 render_menu() {
-  local i
+  local i label desc num
   for i in "${!MENU_OPTIONS[@]}"; do
+    label="${MENU_OPTIONS[$i]%%$'\t'*}"
+    desc="${MENU_OPTIONS[$i]#*$'\t'}"
+    num=$((i + 1))
     if [ "$i" -eq "$MENU_SEL" ]; then
-      printf '\033[K  %s❯%s %s%s%s\n' "$C_CY" "$C_RESET" "$C_B" "${MENU_OPTIONS[$i]}" "$C_RESET"
+      printf '\033[K   %s❯%s %s%d)%s %s%-14s%s %s%s%s\n' \
+        "$C_CY" "$C_RESET" "$C_CY" "$num" "$C_RESET" "$C_B" "$label" "$C_RESET" "$C_DIM" "$desc" "$C_RESET"
     else
-      printf '\033[K    %s%s%s\n' "$C_DIM" "${MENU_OPTIONS[$i]}" "$C_RESET"
+      printf '\033[K     %s%d)%s %-14s %s%s%s\n' \
+        "$C_DIM" "$num" "$C_RESET" "$label" "$C_DIM" "$desc" "$C_RESET"
     fi
   done
 }
 menu() {                       # sets MENU_SEL (or -1 to quit)
   MENU_OPTIONS=("$@"); MENU_SEL=0
   local n=${#MENU_OPTIONS[@]} key rest
-  printf '%s↑/↓ to move · Enter to select · number to jump · q to quit%s\n' "$C_DIM" "$C_RESET"
+  printf '   %sWHAT DO YOU WANT TO DO?%s  %s↑/↓ move · Enter select · 1-%d jump · q quit%s\n\n' \
+    "$C_B" "$C_RESET" "$C_DIM" "$n" "$C_RESET"
   render_menu
   while true; do
     IFS= read -rsn1 key || { MENU_SEL=-1; return; }
@@ -204,15 +241,22 @@ interactive() {
     clear 2>/dev/null || true
     logo
     do_status
+    rule
     printf '\n'
-    menu "Setup (build + token)" "Start server" "Run tests" "Benchmark" "Regenerate token" "Quit"
+    menu \
+      "Setup$(printf '\t')Install Rust, build the app & make a token" \
+      "Start server$(printf '\t')Launch PicoDB (dashboard + database)" \
+      "Run tests$(printf '\t')Check that everything works" \
+      "Benchmark$(printf '\t')Measure speed (throughput & latency)" \
+      "New token$(printf '\t')Generate a new access password" \
+      "Quit$(printf '\t')Exit this menu"
     case "$MENU_SEL" in
       0) printf '\n'; do_setup; pause ;;
       1) printf '\n'; do_run_menu; pause ;;
       2) printf '\n'; do_test; pause ;;
       3) printf '\n'; do_bench; pause ;;
       4) printf '\n'; do_token; pause ;;
-      5|-1) clear 2>/dev/null || true; printf '%sbye 👋%s\n' "$C_CY" "$C_RESET"; exit 0 ;;
+      5|-1) clear 2>/dev/null || true; printf '   %sThanks for using PicoDB — by AKIRU%s 👋\n' "$C_CY" "$C_RESET"; exit 0 ;;
     esac
   done
 }
