@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PicoDB — Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0f17; --panel: #131a26; --panel2: #0f1520; --line: #1f2a3a;
+    --text: #e6edf6; --muted: #8aa0bd; --accent: #4f8cff; --ok: #3fd07f;
+    --warn: #ffb454; --bad: #ff6b6b; --chip: #1b2636;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: radial-gradient(1200px 600px at 70% -10%, #16213a 0%, var(--bg) 55%);
+    color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 20px 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  .logo {
+    width: 34px; height: 34px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--accent), #7b5cff);
+    display: grid; place-items: center; font-weight: 800; color: #fff; letter-spacing: .5px;
+  }
+  h1 { font-size: 18px; margin: 0; font-weight: 700; }
+  h1 span { color: var(--muted); font-weight: 500; }
+  .wsbadge { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px;
+          color: var(--muted); padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; }
+  .livedot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); transition: background .3s; }
+  .wsbadge.on .livedot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .wsbadge.on { color: var(--ok); }
+  .wrap { padding: 24px 28px; max-width: 1100px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .card {
+    background: linear-gradient(180deg, var(--panel), var(--panel2));
+    border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px;
+  }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .card .value { font-size: 26px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .card .value.small { font-size: 20px; }
+  .ratio { height: 6px; background: var(--chip); border-radius: 4px; margin-top: 12px; overflow: hidden; }
+  .ratio > i { display: block; height: 100%; background: var(--ok); width: 0%; transition: width .4s ease; }
+  .panel {
+    background: linear-gradient(180deg, var(--panel), var(--panel2));
+    border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+  }
+  .panel .head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  .panel .head h2 { font-size: 14px; margin: 0; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); margin-right: 7px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 11px 18px; font-variant-numeric: tabular-nums; }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  tbody tr { border-top: 1px solid var(--line); }
+  tbody tr:hover { background: rgba(79,140,255,.06); }
+  .key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #cfe0ff; }
+  .chip { padding: 2px 9px; border-radius: 999px; font-size: 12px; background: var(--chip); color: var(--muted); }
+  .chip.live { color: var(--warn); }
+  .chip.persist { color: var(--muted); }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  footer { color: var(--muted); text-align: center; padding: 20px; font-size: 12px; }
+  a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">P</div>
+    <h1>PicoDB <span>· live cache dashboard</span></h1>
+    <span class="wsbadge" id="live"><span class="livedot"></span><span id="livetext">connecting…</span></span>
+  </header>
+
+  <div class="wrap">
+    <div class="cards">
+      <div class="card"><div class="label">Uptime</div><div class="value small" id="uptime">—</div></div>
+      <div class="card"><div class="label">Total Keys</div><div class="value" id="keys">—</div></div>
+      <div class="card"><div class="label">Memory</div><div class="value small" id="mem">—</div></div>
+      <div class="card"><div class="label">Hits</div><div class="value" id="hits">—</div></div>
+      <div class="card"><div class="label">Misses</div><div class="value" id="misses">—</div></div>
+      <div class="card">
+        <div class="label">Hit Ratio</div>
+        <div class="value small" id="ratio">—</div>
+        <div class="ratio"><i id="ratiobar"></i></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="head">
+        <h2><span class="dot"></span>Keys</h2>
+        <span class="chip" id="count">0 keys</span>
+      </div>
+      <table>
+        <thead><tr><th>Key</th><th>Size</th><th>TTL</th></tr></thead>
+        <tbody id="rows"><tr><td class="empty" colspan="3">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel" style="margin-top:24px">
+      <div class="head">
+        <h2><span class="dot"></span>Live Pub/Sub Stream</h2>
+        <span style="display:flex;gap:8px">
+          <input id="chan" placeholder="channel" value="news"
+                 style="background:var(--chip);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:5px 10px;font-size:12px"/>
+          <button id="subbtn"
+                  style="background:var(--accent);border:0;color:#fff;border-radius:8px;padding:5px 12px;font-size:12px;cursor:pointer">Subscribe</button>
+        </span>
+      </div>
+      <div id="events" style="max-height:220px;overflow:auto;padding:6px 0">
+        <div class="empty">Subscribe to a channel, then PUBLISH to it on :7120 to see live messages.</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>PicoDB · binary engine on :7120 · <a href="/metrics">/metrics</a> · <a href="/api/keys">/api/keys</a></footer>
+
+<script>
+// Vanilla JS: live stats over WebSocket, TTL countdown ticks locally.
+const $ = (id) => document.getElementById(id);
+let ttlBase = new Map();   // key -> remaining seconds at last fetch
+let ttlAt = 0;             // timestamp (ms) of last fetch, for local countdown
+
+// --- Auth token: remembered in localStorage; prompted for when the server
+// --- enforces auth (a 401 clears it and re-prompts). Empty string = no auth.
+function getToken() {
+  let t = localStorage.getItem("picodb_token");
+  if (t === null) { t = prompt("PicoDB access token (leave blank if auth is disabled):") || ""; localStorage.setItem("picodb_token", t); }
+  return t;
+}
+function clearToken() { localStorage.removeItem("picodb_token"); }
+function authHeaders() {
+  const t = localStorage.getItem("picodb_token") || "";
+  return t ? { "Authorization": "Bearer " + t } : {};
+}
+function tokenQuery() {
+  const t = localStorage.getItem("picodb_token") || "";
+  return t ? "?token=" + encodeURIComponent(t) : "";
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1048576).toFixed(2) + " MB";
+}
+function fmtDuration(s) {
+  s = Math.max(0, Math.floor(s));
+  const d = Math.floor(s / 86400); s -= d * 86400;
+  const h = Math.floor(s / 3600); s -= h * 3600;
+  const m = Math.floor(s / 60); s -= m * 60;
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// Apply a stats snapshot (same JSON shape as /api/keys) to the DOM.
+function applyData(data) {
+  ttlAt = Date.now();
+  ttlBase = new Map();
+
+  $("uptime").textContent = fmtDuration(data.uptime_seconds);
+  $("keys").textContent = data.total_keys;
+  $("mem").textContent = fmtBytes(data.memory_usage_bytes);
+  $("hits").textContent = data.hits;
+  $("misses").textContent = data.misses;
+  const total = data.hits + data.misses;
+  const ratio = total ? (data.hits / total) : 0;
+  $("ratio").textContent = (ratio * 100).toFixed(1) + "%";
+  $("ratiobar").style.width = (ratio * 100).toFixed(1) + "%";
+  $("count").textContent = data.keys.length + " keys";
+
+  const rows = $("rows");
+  if (!data.keys.length) {
+    rows.innerHTML = '<tr><td class="empty" colspan="3">No keys in cache</td></tr>';
+    return;
+  }
+  rows.innerHTML = "";
+  for (const k of data.keys) {
+    if (k.ttl !== null && k.ttl !== undefined) ttlBase.set(k.key, k.ttl);
+    const tr = document.createElement("tr");
+    const ttlCell = (k.ttl === null || k.ttl === undefined)
+      ? '<span class="chip persist">persistent</span>'
+      : `<span class="chip live" data-key="${encodeURIComponent(k.key)}">${fmtDuration(k.ttl)}</span>`;
+    tr.innerHTML = `<td class="key">${escapeHtml(k.key)}</td><td>${fmtBytes(k.size)}</td><td>${ttlCell}</td>`;
+    rows.appendChild(tr);
+  }
+}
+
+// One-shot HTTP fallback (used before the socket is up / if WS is unavailable).
+async function fetchOnce() {
+  try {
+    const r = await fetch("/api/keys", { cache: "no-store", headers: authHeaders() });
+    if (r.status === 401) { clearToken(); getToken(); return; } // wrong/absent token -> re-prompt
+    if (r.ok) applyData(await r.json());
+  } catch (e) {}
+}
+
+// Local per-second countdown so TTLs feel real-time between server pushes.
+function tick() {
+  const elapsed = (Date.now() - ttlAt) / 1000;
+  document.querySelectorAll(".chip.live").forEach((el) => {
+    const key = decodeURIComponent(el.getAttribute("data-key"));
+    const base = ttlBase.get(key);
+    if (base === undefined) return;
+    const rem = base - elapsed;
+    el.textContent = rem <= 0 ? "expired" : fmtDuration(rem);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ---- Real-time WebSocket driver (live stats push + pub/sub bridge) ----
+let ws = null;
+function setLive(on, text) {
+  $("live").classList.toggle("on", on);
+  $("livetext").textContent = text;
+}
+function logEvent(chan, text) {
+  const box = $("events");
+  if (box.querySelector(".empty")) box.innerHTML = "";
+  const row = document.createElement("div");
+  row.style.cssText = "padding:6px 4px;border-top:1px solid var(--line);font-family:ui-monospace,monospace;font-size:12px";
+  const t = new Date().toLocaleTimeString();
+  row.innerHTML = `<span style="color:var(--muted)">${t}</span> <span class="chip live">${escapeHtml(chan)}</span> ${escapeHtml(text)}`;
+  box.prepend(row);
+  while (box.children.length > 50) box.removeChild(box.lastChild);
+}
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}/ws${tokenQuery()}`);
+  ws.binaryType = "arraybuffer";
+  setLive(false, "connecting…");
+
+  ws.onopen = () => { setLive(true, "live"); resubscribe(); };
+  ws.onclose = () => { setLive(false, "reconnecting…"); setTimeout(connect, 1500); };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") {
+      // Text frame = live stats JSON snapshot.
+      try { applyData(JSON.parse(ev.data)); } catch (e) {}
+    } else {
+      // Binary frame = a pub/sub message on the subscribed channel.
+      const text = new TextDecoder().decode(new Uint8Array(ev.data));
+      logEvent(curChannel || "?", text);
+    }
+  };
+}
+
+let curChannel = "";
+function resubscribe() {
+  if (ws && ws.readyState === WebSocket.OPEN && curChannel) ws.send(curChannel);
+}
+$("subbtn").onclick = () => {
+  curChannel = $("chan").value.trim();
+  if (curChannel) { resubscribe(); logEvent("system", `subscribed to “${curChannel}”`); }
+};
+
+getToken();        // ensure a token (or blank) is chosen before first request
+fetchOnce();       // instant first paint
+connect();         // real-time thereafter
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+[package]
+name = "picodb"
+version = "0.1.0"
+edition = "2021"
+description = "PicoDB — ultra-low-latency, zero-dependency in-memory KV cache (binary engine + HTTP dashboard)"
+
+# --- Dependencies -----------------------------------------------------------
+# Strictly tokio (minimal feature set) + the standard library. Nothing else:
+# no web framework, no serde, no HTTP crate — the HTTP/1.1 parser, the JSON for
+# /api/keys, and the Prometheus text are all hand-rolled.
+#   rt-multi-thread : work-stealing scheduler across cores
+#   net             : TcpListener / TcpStream (both listeners)
+#   io-util         : AsyncReadExt / AsyncWriteExt
+#   macros          : #[tokio::main], tokio::select!
+#   sync            : mpsc channels for pub/sub fan-out
+#   time            : tokio::time::interval for the WebSocket live-stats tick
+[dependencies]
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "macros",
+    "sync",
+    "time",
+] }
+
+# --- Release profile: small, fast, single stripped binary -------------------
+[profile.release]
+opt-level = 3
+lto = true            # link-time optimization across the whole crate graph
+codegen-units = 1     # maximize optimization
+panic = "abort"       # no unwinding tables -> smaller binary, lower idle RAM
+strip = true          # strip symbols

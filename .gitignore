@@ -1,0 +1,12 @@
+# Rust build output
+/target
+
+# Local secrets & config — NEVER commit the real token
+.env
+
+# Compiled benchmark helper
+/bench/loadgen
+
+# Editor/OS noise
+*.swp
+.DS_Store
