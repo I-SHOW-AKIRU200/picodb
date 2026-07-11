@@ -107,7 +107,7 @@ or `PICODB_USERNAME`/`PICODB_PASSWORD`. With a single token use an empty usernam
 
 ```python
 from client import PicoDB
-db = PicoDB.from_uri("picodb://admin:change-me@YOUR_HOST:7120")
+db = PicoDB.from_uri("picodb://admin:change-me@localhost:7120")
 db.set("user:1", "alice", ttl=3600)
 print(db.get("user:1"))          # b'alice'
 db.delete("user:1")
@@ -115,7 +115,7 @@ db.delete("user:1")
 
 ```js
 const { PicoDB } = require("./client");
-const db = await PicoDB.connect("picodb://admin:change-me@YOUR_HOST:7120");
+const db = await PicoDB.connect("picodb://admin:change-me@localhost:7120");
 await db.set("user:1", "alice", 3600);
 console.log((await db.get("user:1")).toString());  // "alice"
 db.close();
