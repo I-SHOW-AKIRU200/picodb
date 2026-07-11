@@ -28,10 +28,11 @@
 //!
 //! ## Response frames
 //! ```text
-//!  [0x00]            Success (SET / DEL / FLUSH / PUBLISH / SUBSCRIBE ack)
-//!  [0x00] + payload  Success for GET (payload = the stored value)
-//!  [0x44]            Missing (key not found / expired on GET or DEL)  ('D')
-//!  [0xFF]            System / parse error
+//!  [0x00]                       Success (SET / DEL / FLUSH / AUTH / PUBLISH / SUBSCRIBE ack)
+//!  [0x00][len u32 BE][value]    Success for GET (length-prefixed, self-delimiting)
+//!  [0x44]                       Missing (key not found / expired on GET or DEL)  ('D')
+//!  [0x41]                       Auth required / invalid token  ('A')
+//!  [0xFF]                       System / parse error
 //! ```
 //!
 //! ## Pub/Sub delivery frame (server -> subscriber, port 7120)
@@ -278,7 +279,11 @@ impl LruCache {
         {
             let n = self.nodes[idx].as_mut().unwrap();
             n.last_accessed = now;
-            out.push(RSP_OK); // [0x00] + payload, copied once straight to the wire buffer
+            // Self-delimiting reply: [0x00][value len: u32 BE][value bytes].
+            // The length prefix lets a streaming client frame the value exactly
+            // (matches the pub/sub delivery frame format).
+            out.push(RSP_OK);
+            out.extend_from_slice(&(n.value.len() as u32).to_be_bytes());
             out.extend_from_slice(&n.value);
         }
         self.move_to_front(idx);
@@ -1119,13 +1124,26 @@ fn config_cap() -> usize {
         .unwrap_or(50 * 1024 * 1024) // 50 MiB default cap
 }
 
-/// Read the shared auth token from `PICODB_TOKEN`. An empty/unset value means
-/// auth is disabled. The token itself is never logged.
+/// Resolve the shared auth secret. Priority:
+///   1. `PICODB_TOKEN`                    -> secret is the token verbatim
+///   2. `PICODB_PASSWORD` (+ optional     -> secret is "username:password"
+///      `PICODB_USERNAME`, default "default")
+///   3. neither set                       -> auth disabled
+/// Clients send this exact string in the AUTH frame / as the HTTP Bearer token.
+/// The secret is never logged.
 fn config_token() -> Option<Vec<u8>> {
-    match env::var("PICODB_TOKEN") {
-        Ok(t) if !t.is_empty() => Some(t.into_bytes()),
-        _ => None,
+    if let Ok(t) = env::var("PICODB_TOKEN") {
+        if !t.is_empty() {
+            return Some(t.into_bytes());
+        }
     }
+    if let Ok(pass) = env::var("PICODB_PASSWORD") {
+        if !pass.is_empty() {
+            let user = env::var("PICODB_USERNAME").unwrap_or_else(|_| "default".to_string());
+            return Some(format!("{user}:{pass}").into_bytes());
+        }
+    }
+    None
 }
 
 /// Address to bind both listeners to. Defaults to loopback (`127.0.0.1`) — the

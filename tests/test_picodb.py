@@ -17,6 +17,14 @@ def recvn(s, n):
         if not x: break
         b += x
     return b
+def bget(s, k):
+    """GET returning the value bytes, or None if missing (length-prefixed reply)."""
+    s.sendall(bf(GET, k))
+    st = recvn(s, 1)
+    if st == MISS: return None
+    assert st == OK, f"unexpected status {st!r}"
+    (ln,) = struct.unpack(">I", recvn(s, 4))
+    return recvn(s, ln)
 def ck(n, c, g=None):
     print(("PASS " if c else "FAIL ") + n + ("" if c else f"  got={g!r}"))
     if not c: fails.append(n)
@@ -32,23 +40,24 @@ def authed_conn():
 
 # ---- core ops ----
 s = authed_conn()
-ck("SET/GET", brq(s, SET, b"foo", b"bar") == OK and brq(s, GET, b"foo") == b"\x00bar")
-ck("GET missing", brq(s, GET, b"nope") == MISS)
-ck("DEL", brq(s, DEL, b"foo") == OK and brq(s, GET, b"foo") == MISS)
+ck("SET/GET", brq(s, SET, b"foo", b"bar") == OK and bget(s, b"foo") == b"bar")
+ck("GET missing", bget(s, b"nope") is None)
+ck("DEL", brq(s, DEL, b"foo") == OK and bget(s, b"foo") is None)
 ck("binary-safe", brq(s, SET, bytes([0,1,255]), bytes(range(256))) == OK and
-   brq(s, GET, bytes([0,1,255])) == b"\x00" + bytes(range(256)))
+   bget(s, bytes([0,1,255])) == bytes(range(256)))
 # TTL
-brq(s, SET, b"t", b"z", 1); time.sleep(1.2); ck("TTL lazy expiry", brq(s, GET, b"t") == MISS)
+brq(s, SET, b"t", b"z", 1); time.sleep(1.2); ck("TTL lazy expiry", bget(s, b"t") is None)
 # FLUSH
-brq(s, SET, b"a", b"1"); ck("FLUSH", brq(s, FLUSH) == OK and brq(s, GET, b"a") == MISS)
-# pipelined ordering
+brq(s, SET, b"a", b"1"); ck("FLUSH", brq(s, FLUSH) == OK and bget(s, b"a") is None)
+# pipelined ordering (GET replies are [0x00][len4][value])
 s.sendall(bf(SET,b"p1",b"A")+bf(SET,b"p2",b"B")+bf(GET,b"p1")+bf(GET,b"p2"))
 time.sleep(0.1)
-ck("pipelined order", recvn(s,1+1+2+2) == b"\x00\x00\x00A\x00B")
+exp = OK + OK + OK + struct.pack(">I",1) + b"A" + OK + struct.pack(">I",1) + b"B"
+ck("pipelined order", recvn(s, len(exp)) == exp)
 # 1MB roundtrip
 val = bytes([i % 256 for i in range(1_000_000)])
 s.sendall(bf(SET, b"big", val)); assert s.recv(1) == OK
-s.sendall(bf(GET, b"big")); ck("1MB roundtrip", recvn(s, 1+len(val)) == b"\x00" + val)
+ck("1MB roundtrip", bget(s, b"big") == val)
 s.close()
 
 # ---- pub/sub ----

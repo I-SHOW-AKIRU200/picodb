@@ -84,12 +84,57 @@ Pub/sub delivery frame (server → subscriber): `[0x00] | [len u32] | [payload]`
 ```
 1. AUTH   (0x07)  token in key field           -> 0x00 ok | 0x41 rejected   (only if auth enabled)
 2. SET    (0x01)  key, value, ttl              -> 0x00
-   GET    (0x02)  key                          -> 0x00 + value | 0x44
+   GET    (0x02)  key                          -> 0x00 [len u32][value] | 0x44
    DEL    (0x03)  key                          -> 0x00 | 0x44
    FLUSH  (0x04)                               -> 0x00
 3. SUBSCRIBE (0x05) channel  -> 0x00 ack, then push frames on every PUBLISH
    PUBLISH   (0x06) channel, payload -> 0x00 (fans out to subscribers)
 ```
+
+## Connect from your code
+
+### Connection URI
+```
+picodb://[username:password@]host[:port]      # default port 7120 (binary engine)
+```
+The part before `@` is your **auth secret** — it must match the server's `PICODB_TOKEN`,
+or `PICODB_USERNAME`/`PICODB_PASSWORD`. With a single token use an empty username:
+`picodb://:<token>@host:7120`.
+
+### Ready-made clients (zero dependencies)
+- **Python** — [`examples/client.py`](examples/client.py)
+- **Node.js** — [`examples/client.js`](examples/client.js)
+
+```python
+from client import PicoDB
+db = PicoDB.from_uri("picodb://admin:change-me@YOUR_HOST:7120")
+db.set("user:1", "alice", ttl=3600)
+print(db.get("user:1"))          # b'alice'
+db.delete("user:1")
+```
+
+```js
+const { PicoDB } = require("./client");
+const db = await PicoDB.connect("picodb://admin:change-me@YOUR_HOST:7120");
+await db.set("user:1", "alice", 3600);
+console.log((await db.get("user:1")).toString());  // "alice"
+db.close();
+```
+
+> Note: the `picodb://` URI is a **client-side convention** the example clients parse; the
+> server speaks the raw binary protocol above (host + port + AUTH), it doesn't parse URIs itself.
+
+## Authentication
+
+Two interchangeable ways to set the secret in `.env`:
+
+| Style | `.env` | Connect with |
+|-------|--------|--------------|
+| Single token | `PICODB_TOKEN=<token>` | `picodb://:<token>@host:7120` |
+| User + password | `PICODB_USERNAME=admin`<br>`PICODB_PASSWORD=secret` | `picodb://admin:secret@host:7120` |
+
+The same secret authenticates the HTTP dashboard (`Authorization: Bearer <secret>` or `?token=<secret>`)
+and the WebSocket (`?token=<secret>`). Regenerate a random token anytime with `./picodb token`.
 
 ## Real-time
 
