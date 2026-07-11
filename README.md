@@ -9,13 +9,25 @@ An ultra-low-latency, **zero-dependency** in-memory key/value cache in Rust — 
 
 > Not a full Redis replacement — no persistence, clustering, or rich data types. It's a fast, small, volatile cache with a real-time dashboard.
 
-## One-line install & run
+## Install
+
+**One-line install** (clones the repo, installs Rust if needed, builds, generates an access token):
 
 ```bash
-git clone https://github.com/I-SHOW-AKIRU200/picodb && cd picodb && ./picodb
+curl -fsSL https://raw.githubusercontent.com/I-SHOW-AKIRU200/picodb/main/install.sh | bash
 ```
 
-`./picodb` opens an interactive CLI (ASCII logo + arrow-key menu) that can **Setup** (install Rust if needed, build, and generate a random access token into `.env` — auth **on** by default), **Start** the server, **Test**, **Benchmark**, and **Regenerate token**. Then open the dashboard at **http://127.0.0.1:7121/** and paste the token from `.env` when prompted.
+**Or clone and run the CLI manually:**
+
+```bash
+git clone https://github.com/I-SHOW-AKIRU200/picodb.git && cd picodb && ./picodb
+```
+
+`./picodb` opens an interactive CLI (ASCII logo + arrow-key menu) that can **Setup** (install Rust if needed, build, and generate a random access token into `.env` — auth **on** by default), **Start** the server, **Test**, **Benchmark**, and **Regenerate token**. After install, start the server and open the dashboard at **http://127.0.0.1:7121/**, pasting the token from `.env` when prompted:
+
+```bash
+cd picodb && ./picodb run
+```
 
 It's also fully scriptable:
 
