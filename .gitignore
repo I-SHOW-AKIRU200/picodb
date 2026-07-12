@@ -11,6 +11,11 @@
 *.out
 picodb.out
 
+# AOF persistence files (data — never commit)
+*.aof
+*.aof.tmp
+picodb.aof*
+
 # Python bytecode
 __pycache__/
 *.pyc

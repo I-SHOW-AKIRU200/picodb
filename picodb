@@ -121,6 +121,9 @@ do_test() {
   local pid=$!; sleep 1.2
   PICODB_TOKEN="$tok" python3 tests/test_picodb.py || true
   kill "$pid" 2>/dev/null || true
+  # AOF persistence tests spawn their own isolated instances (ports 7320/7321).
+  say "Running AOF persistence tests…"
+  python3 tests/test_aof.py || true
 }
 
 do_bench() {

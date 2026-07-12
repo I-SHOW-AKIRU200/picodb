@@ -14,6 +14,7 @@ description = "PicoDB — ultra-low-latency, zero-dependency in-memory KV cache 
 #   macros          : #[tokio::main], tokio::select!
 #   sync            : mpsc channels for pub/sub fan-out
 #   time            : tokio::time::interval for the WebSocket live-stats tick
+#   signal          : SIGINT/SIGTERM handling for a durable AOF flush on shutdown
 [dependencies]
 tokio = { version = "1", default-features = false, features = [
     "rt-multi-thread",
@@ -22,6 +23,7 @@ tokio = { version = "1", default-features = false, features = [
     "macros",
     "sync",
     "time",
+    "signal",
 ] }
 
 # --- Release profile: small, fast, single stripped binary -------------------

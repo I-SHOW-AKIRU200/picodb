@@ -43,7 +43,11 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc as sync_mpsc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -191,6 +195,7 @@ struct LruCache {
     tail: Option<usize>,          // least-recently-used (evicted first)
     used: usize,                  // approximate live bytes
     cap: usize,                   // hard RAM ceiling in bytes
+    evicted: Vec<Vec<u8>>,        // keys dropped by capacity eviction, pending AOF delete
 }
 
 /// Fixed per-entry bookkeeping estimate (map bucket + node struct + Vec headers)
@@ -212,6 +217,7 @@ impl LruCache {
             tail: None,
             used: 0,
             cap,
+            evicted: Vec::new(),
         }
     }
 
@@ -298,8 +304,16 @@ impl LruCache {
             if self.tail == keep_idx {
                 break;
             }
+            // Capture the key about to be evicted so the AOF can log a matching
+            // delete — otherwise the evicted key's `SET` would resurrect on replay.
+            let evicted_key = self
+                .tail
+                .map(|t| self.nodes[t].as_ref().unwrap().key.clone());
             if !self.evict_lru() {
                 break;
+            }
+            if let Some(k) = evicted_key {
+                self.evicted.push(k);
             }
         }
     }
@@ -435,6 +449,353 @@ impl LruCache {
         }
         out
     }
+
+    /// Serialize the entire live dataset into the minimal set of AOF frames that
+    /// recreate it — the basis of log compaction (rewrite). Expired entries are
+    /// skipped; a string's TTL is emitted as an **absolute** expiry (the format
+    /// the replay path expects). Collections never carry a TTL in this protocol.
+    fn dump_frames(&self, now: u64) -> Vec<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.map.len());
+        for (key, &idx) in self.map.iter() {
+            let n = self.nodes[idx].as_ref().unwrap();
+            let ttl_abs = match n.expires_at {
+                Some(e) if e <= now => continue, // already expired: don't persist
+                Some(e) => e as u32,             // absolute unix seconds (fits until 2106)
+                None => 0,
+            };
+            match &n.value {
+                Value::Str(v) => out.push(encode_frame(ACT_SET, key, v, ttl_abs)),
+                Value::Hash(h) => {
+                    for (f, v) in h.iter() {
+                        let mut args = Vec::with_capacity(8 + f.len() + v.len());
+                        arr_item(&mut args, f);
+                        arr_item(&mut args, v);
+                        out.push(encode_frame(ACT_HSET, key, &args, 0));
+                    }
+                }
+                Value::List(l) => {
+                    let mut args = Vec::new();
+                    for item in l.iter() {
+                        arr_item(&mut args, item);
+                    }
+                    if !args.is_empty() {
+                        out.push(encode_frame(ACT_RPUSH, key, &args, 0));
+                    }
+                }
+                Value::Set(s) => {
+                    let mut args = Vec::new();
+                    for m in s.iter() {
+                        arr_item(&mut args, m);
+                    }
+                    if !args.is_empty() {
+                        out.push(encode_frame(ACT_SADD, key, &args, 0));
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+// ===========================================================================
+// Append-only file (AOF) persistence.
+//
+// Durability with the same zero-dependency ethos: every *mutating* command is
+// appended to a log file (as its wire frame), and on startup the log is replayed
+// through `apply_into` to rebuild memory. The AOF record format IS the request
+// frame — so logging is a re-encode and replay is a re-decode, with no new
+// serialization layer.
+//
+// A dedicated OS thread owns the file. `apply_into` is synchronous and runs under
+// the cache write lock, so it can `send` a frame into a `std::sync::mpsc` channel
+// directly — this keeps blocking `fsync`/file I/O off tokio's worker threads AND
+// makes the log order exactly match apply order (the send happens while the lock
+// is held, so concurrent connections can't interleave).
+// ===========================================================================
+
+/// Durability policy — how often the writer thread calls `fsync`.
+#[derive(Clone, Copy, PartialEq)]
+enum Fsync {
+    /// `fsync` after every command. Strongest; throughput bounded by disk fsync
+    /// latency. (Replies aren't gated on the fsync, so it's "flush immediately",
+    /// not synchronous-ack.)
+    Always,
+    /// `fsync` at most once per second (Redis default). A power loss / OS crash
+    /// loses ≤1s; a mere process crash loses nothing (writes reach the OS every
+    /// batch). The hot path never blocks on disk. The balanced default.
+    EverySec,
+    /// Never explicitly `fsync`; the OS flushes on its own schedule. Fastest.
+    /// Writes still reach the OS every batch (so a process crash loses nothing),
+    /// but a power loss / OS crash can lose whatever the OS hadn't flushed yet.
+    No,
+}
+
+impl Fsync {
+    fn parse(s: &str) -> Fsync {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "always" => Fsync::Always,
+            "no" | "never" => Fsync::No,
+            _ => Fsync::EverySec, // default / "everysec"
+        }
+    }
+}
+
+/// Messages sent to the writer thread.
+enum AofMsg {
+    /// Append one command frame to the log.
+    Frame(Vec<u8>),
+    /// Replace the log with this compacted snapshot (log rewrite / compaction).
+    Rewrite(Vec<Vec<u8>>),
+    /// Flush + fsync everything buffered, then acknowledge (graceful shutdown).
+    Flush(sync_mpsc::Sender<()>),
+}
+
+/// Handle to the running AOF writer, held by `Server`.
+struct Aof {
+    tx: sync_mpsc::Sender<AofMsg>,
+    size: Arc<AtomicU64>,       // approximate current on-disk size (rewrite trigger)
+    rewrites: Arc<AtomicU64>,   // completed rewrites (exposed as a metric)
+    rewriting: Arc<AtomicBool>, // a rewrite is queued/in-flight (dedupes triggers)
+}
+
+impl Aof {
+    /// Append a pre-encoded frame. Silently drops if the writer thread is gone —
+    /// a broken log must never take down the live server.
+    #[inline]
+    fn log(&self, frame: Vec<u8>) {
+        let _ = self.tx.send(AofMsg::Frame(frame));
+    }
+
+    /// Durably flush the log and block until the writer confirms (bounded wait).
+    /// Called on graceful shutdown so a clean restart never loses buffered writes.
+    fn flush_blocking(&self) {
+        let (ack_tx, ack_rx) = sync_mpsc::channel();
+        if self.tx.send(AofMsg::Flush(ack_tx)).is_ok() {
+            let _ = ack_rx.recv_timeout(Duration::from_secs(2));
+        }
+    }
+}
+
+/// Total byte length of a set of frames (post-rewrite file size).
+fn frames_len(frames: &[Vec<u8>]) -> u64 {
+    frames.iter().map(|f| f.len() as u64).sum()
+}
+
+/// Open `path` for appending and spawn the dedicated writer thread. Returns the
+/// `Aof` handle (or an I/O error if the file can't be opened).
+fn spawn_aof_writer(path: PathBuf, policy: Fsync) -> std::io::Result<Aof> {
+    let file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let start_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+    let (tx, rx) = sync_mpsc::channel::<AofMsg>();
+    let size = Arc::new(AtomicU64::new(start_size));
+    let rewrites = Arc::new(AtomicU64::new(0));
+    let rewriting = Arc::new(AtomicBool::new(false));
+
+    let (w_size, w_rewrites, w_rewriting) =
+        (Arc::clone(&size), Arc::clone(&rewrites), Arc::clone(&rewriting));
+
+    std::thread::Builder::new()
+        .name("picodb-aof".into())
+        .spawn(move || aof_writer_loop(path, policy, file, rx, w_size, w_rewrites, w_rewriting))
+        .expect("spawn PicoDB AOF writer thread");
+
+    Ok(Aof { tx, size, rewrites, rewriting })
+}
+
+/// The writer thread. Owns the file; drains the channel in batches; pushes each
+/// batch to the OS (so acknowledged writes survive a process crash) and fsyncs to
+/// disk per policy. `recv_timeout(1s)` doubles as the `EverySec` heartbeat.
+fn aof_writer_loop(
+    path: PathBuf,
+    policy: Fsync,
+    file: File,
+    rx: sync_mpsc::Receiver<AofMsg>,
+    size: Arc<AtomicU64>,
+    rewrites: Arc<AtomicU64>,
+    rewriting: Arc<AtomicBool>,
+) {
+    let mut writer = BufWriter::new(file);
+    let mut unsynced = false; // written to the OS but not yet fsynced (everysec/no)
+
+    // Push the userspace buffer to the OS; fsync to disk only when `sync` is set.
+    // Returns false if the underlying file is gone (writer should exit).
+    let persist = |writer: &mut BufWriter<File>, sync: bool| -> bool {
+        if writer.flush().is_err() {
+            return false;
+        }
+        if sync {
+            let _ = writer.get_ref().sync_data();
+        }
+        true
+    };
+
+    loop {
+        // Block for the next message (the 1s timeout is the everysec fsync tick).
+        let first = match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(m) => m,
+            Err(sync_mpsc::RecvTimeoutError::Timeout) => {
+                if unsynced && policy == Fsync::EverySec {
+                    let _ = writer.get_ref().sync_data();
+                    unsynced = false;
+                }
+                continue;
+            }
+            Err(sync_mpsc::RecvTimeoutError::Disconnected) => {
+                let _ = persist(&mut writer, true);
+                return;
+            }
+        };
+
+        // Drain this message plus everything already queued: batch frame writes so
+        // one flush (and at most one fsync) covers the whole burst.
+        let mut msg = Some(first);
+        let mut wrote = false;
+        let mut disconnected = false;
+        while let Some(m) = msg {
+            match m {
+                AofMsg::Frame(f) => {
+                    if writer.write_all(&f).is_err() {
+                        return;
+                    }
+                    size.fetch_add(f.len() as u64, Ordering::Relaxed);
+                    wrote = true;
+                }
+                AofMsg::Rewrite(frames) => {
+                    if wrote && !persist(&mut writer, false) {
+                        return; // land queued appends before swapping the file
+                    }
+                    wrote = false;
+                    if let Some(w) = rewrite_aof(&path, &frames) {
+                        writer = w;
+                        size.store(frames_len(&frames), Ordering::Relaxed);
+                        rewrites.fetch_add(1, Ordering::Relaxed);
+                        unsynced = false;
+                    }
+                    // On failure keep appending to the existing file (no data loss).
+                    rewriting.store(false, Ordering::Relaxed);
+                }
+                AofMsg::Flush(ack) => {
+                    wrote = false;
+                    let _ = persist(&mut writer, true); // durable flush on request
+                    unsynced = false;
+                    let _ = ack.send(());
+                }
+            }
+            match rx.try_recv() {
+                Ok(next) => msg = Some(next),
+                Err(sync_mpsc::TryRecvError::Empty) => msg = None,
+                Err(sync_mpsc::TryRecvError::Disconnected) => {
+                    msg = None;
+                    disconnected = true;
+                }
+            }
+        }
+
+        if wrote {
+            // Always push to the OS page cache; fsync to disk only on `always`.
+            if !persist(&mut writer, policy == Fsync::Always) {
+                return;
+            }
+            unsynced = policy != Fsync::Always;
+        }
+        if disconnected {
+            let _ = persist(&mut writer, true);
+            return;
+        }
+    }
+}
+
+/// Compact the log: write `frames` to a sibling temp file, fsync it, atomically
+/// rename it over the live path, and hand back a fresh appending writer. Returns
+/// `None` on any I/O error (caller keeps the old file — no data loss).
+fn rewrite_aof(path: &Path, frames: &[Vec<u8>]) -> Option<BufWriter<File>> {
+    // "<path>.tmp" regardless of the original extension.
+    let mut tmp_os = path.as_os_str().to_owned();
+    tmp_os.push(".tmp");
+    let tmp = PathBuf::from(tmp_os);
+
+    let write_tmp = || -> std::io::Result<()> {
+        let mut f = BufWriter::new(
+            OpenOptions::new().create(true).write(true).truncate(true).open(&tmp)?,
+        );
+        for frame in frames {
+            f.write_all(frame)?;
+        }
+        f.flush()?;
+        f.get_ref().sync_data()?; // land the temp durably before the rename
+        std::fs::rename(&tmp, path)?; // atomic swap on the same filesystem
+        Ok(())
+    };
+    if let Err(e) = write_tmp() {
+        eprintln!("PicoDB: AOF rewrite failed: {e}");
+        let _ = std::fs::remove_file(&tmp);
+        return None;
+    }
+    match OpenOptions::new().create(true).append(true).open(path) {
+        Ok(file) => Some(BufWriter::new(file)),
+        Err(e) => {
+            eprintln!("PicoDB: AOF reopen after rewrite failed: {e}");
+            None
+        }
+    }
+}
+
+/// Replay a saved AOF into `cache`, rebuilding state. Runs once at startup, before
+/// the server begins serving — and before the writer is installed, so replayed
+/// commands are NOT re-logged. Returns the number of commands applied.
+///
+/// A `SET`'s TTL field holds an **absolute** expiry: convert it back to a relative
+/// TTL, and skip keys that already expired. Corruption at the tail (a partially
+/// written final frame after a crash) is tolerated — replay stops there.
+fn replay_aof(server: &Server, path: &Path) -> std::io::Result<u64> {
+    let data = match std::fs::read(path) {
+        Ok(d) => d,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e),
+    };
+    let now = now_secs();
+    let mut scratch = Vec::new(); // discarded replies
+    let mut pos = 0usize;
+    let mut applied = 0u64;
+
+    while data.len() - pos >= HEADER_LEN {
+        let (action, klen, vlen, ttl_field) = decode_header(&data[pos..pos + HEADER_LEN]);
+        let total = HEADER_LEN + klen + vlen;
+        if klen + vlen > MAX_FRAME_BODY || data.len() - pos < total {
+            break; // truncated / corrupt tail — stop cleanly
+        }
+        let kstart = pos + HEADER_LEN;
+        let vstart = kstart + klen;
+        let vend = vstart + vlen;
+
+        // SET carries an absolute expiry; other actions ignore the TTL field.
+        let ttl = if action == ACT_SET && ttl_field != 0 {
+            if ttl_field as u64 <= now {
+                pos += total; // already expired — don't resurrect it
+                continue;
+            }
+            (ttl_field as u64 - now) as u32
+        } else {
+            0
+        };
+
+        scratch.clear();
+        apply_into(
+            server,
+            action,
+            &data[kstart..vstart],
+            &data[vstart..vend],
+            ttl,
+            &mut scratch,
+        );
+        applied += 1;
+        pos += total;
+    }
+
+    // Evictions during replay aren't logged; discard any queued delete markers.
+    server.cache.write().unwrap_or_else(|p| p.into_inner()).evicted.clear();
+    Ok(applied)
 }
 
 // ===========================================================================
@@ -451,6 +812,7 @@ struct Server {
     misses: AtomicU64,
     start: Instant,
     auth: Option<Vec<u8>>, // shared secret token; None = auth disabled
+    aof: Option<Aof>,      // append-only persistence; None = in-memory only
 }
 
 impl Server {
@@ -462,6 +824,7 @@ impl Server {
             misses: AtomicU64::new(0),
             start: Instant::now(),
             auth,
+            aof: None,
         }
     }
 
@@ -545,10 +908,35 @@ fn parse_args(mut v: &[u8]) -> Option<Vec<&[u8]>> {
     Some(args)
 }
 
+/// True for the commands that change stored state — the ones the AOF must record.
+/// Read-only commands and PUB/SUB are excluded. (SUBSCRIBE never reaches
+/// `apply_into`; PUBLISH does but touches only the subscriber registry.)
+#[inline]
+fn is_mutating(action: u8) -> bool {
+    matches!(
+        action,
+        ACT_SET
+            | ACT_DEL
+            | ACT_FLUSH
+            | ACT_HSET
+            | ACT_HDEL
+            | ACT_LPUSH
+            | ACT_RPUSH
+            | ACT_LPOP
+            | ACT_RPOP
+            | ACT_SADD
+            | ACT_SREM
+    )
+}
+
 /// Dispatch one decoded command, appending its reply bytes to `out`.
 /// Appends to a shared reply buffer so a whole pipelined batch is answered with
 /// a single socket write. SUBSCRIBE is handled by the caller (it hijacks the
 /// connection). WRONGTYPE / malformed args reply `0xFF`.
+///
+/// When AOF is enabled, every mutating command that runs to completion here is
+/// appended to the log (plus a `DEL` for any key LRU-evicted as a side effect),
+/// so the exact history can be replayed on restart.
 fn apply_into(server: &Server, action: u8, key: &[u8], value: &[u8], ttl: u32, out: &mut Vec<u8>) {
     let now = now_secs();
     let mut cache = lock_or_recover!(server.cache.write());
@@ -842,10 +1230,49 @@ fn apply_into(server: &Server, action: u8, key: &[u8], value: &[u8], ttl: u32, o
                 }
             }
             out.push(RSP_OK);
+            return; // cache lock already dropped — skip the AOF tail below
         }
 
         _ => out.push(RSP_ERROR), // unknown action byte
     }
+
+    // --- AOF: persist this command, then any evictions it triggered. ---------
+    // Ordering matters: the command is logged before the eviction deletes it
+    // caused, so replay reproduces the same sequence. Read-only commands and the
+    // `0xFF` error paths (which early-`return`ed above) are never logged.
+    match &server.aof {
+        Some(aof) => {
+            if is_mutating(action) {
+                let frame = if action == ACT_SET {
+                    // Store an absolute expiry so a restart doesn't reset the TTL.
+                    let ttl_abs = if ttl > 0 { (now + ttl as u64) as u32 } else { 0 };
+                    encode_frame(ACT_SET, key, value, ttl_abs)
+                } else {
+                    encode_frame(action, key, value, 0)
+                };
+                aof.log(frame);
+            }
+            for k in cache.evicted.drain(..) {
+                aof.log(encode_frame(ACT_DEL, &k, &[], 0));
+            }
+        }
+        // AOF off: still drain eviction markers so they can't accumulate.
+        None => cache.evicted.clear(),
+    }
+}
+
+/// Encode a full request frame (11-byte header + key + value); the inverse of
+/// `decode_header`. Used to serialize an applied command for the AOF log. For a
+/// `SET`, `ttl` carries the **absolute** expiry the replay path expects (0 = none).
+fn encode_frame(action: u8, key: &[u8], value: &[u8], ttl: u32) -> Vec<u8> {
+    let mut f = Vec::with_capacity(HEADER_LEN + key.len() + value.len());
+    f.push(action);
+    f.extend_from_slice(&(key.len() as u16).to_be_bytes());
+    f.extend_from_slice(&(value.len() as u32).to_be_bytes());
+    f.extend_from_slice(&ttl.to_be_bytes());
+    f.extend_from_slice(key);
+    f.extend_from_slice(value);
+    f
 }
 
 /// Decode the 11-byte header at `buf[pos..]`. Returns (action, klen, vlen, ttl).
@@ -1122,6 +1549,20 @@ async fn handle_http_conn(mut stream: TcpStream, server: Arc<Server>) {
         "/metrics" | "/api/keys" => {
             let _ = write_http(&mut stream, 401, "text/plain", b"Unauthorized").await;
         }
+        // Trigger an on-demand AOF compaction (BGREWRITEAOF-style). Authorized.
+        "/aof/rewrite" if method == "POST" && authorized => {
+            let (code, msg): (u16, &[u8]) = if server.aof.is_none() {
+                (409, b"AOF disabled")
+            } else if trigger_aof_rewrite(&server) {
+                (202, b"rewrite started")
+            } else {
+                (409, b"rewrite already in progress")
+            };
+            let _ = write_http(&mut stream, code, "text/plain", msg).await;
+        }
+        "/aof/rewrite" if method == "POST" => {
+            let _ = write_http(&mut stream, 401, "text/plain", b"Unauthorized").await;
+        }
         _ => {
             let _ = write_http(&mut stream, 404, "text/plain", b"Not Found").await;
         }
@@ -1200,9 +1641,11 @@ fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
 async fn write_http(stream: &mut TcpStream, status: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
+        202 => "Accepted",
         400 => "Bad Request",
         401 => "Unauthorized",
         404 => "Not Found",
+        409 => "Conflict",
         _ => "OK",
     };
     // Advertise Bearer auth on 401 so standard clients know how to authenticate.
@@ -1269,6 +1712,23 @@ fn render_metrics(server: &Server) -> String {
     s.push_str("# TYPE picodb_misses_total counter\n");
     s.push_str(&format!("picodb_misses_total {misses}\n"));
 
+    s.push_str("# HELP picodb_aof_enabled Whether append-only persistence is enabled (1/0).\n");
+    s.push_str("# TYPE picodb_aof_enabled gauge\n");
+    match &server.aof {
+        Some(aof) => {
+            let size = aof.size.load(Ordering::Relaxed);
+            let rewrites = aof.rewrites.load(Ordering::Relaxed);
+            s.push_str("picodb_aof_enabled 1\n");
+            s.push_str("# HELP picodb_aof_size_bytes Approximate current AOF size in bytes.\n");
+            s.push_str("# TYPE picodb_aof_size_bytes gauge\n");
+            s.push_str(&format!("picodb_aof_size_bytes {size}\n"));
+            s.push_str("# HELP picodb_aof_rewrites_total Completed AOF rewrites (compactions).\n");
+            s.push_str("# TYPE picodb_aof_rewrites_total counter\n");
+            s.push_str(&format!("picodb_aof_rewrites_total {rewrites}\n"));
+        }
+        None => s.push_str("picodb_aof_enabled 0\n"),
+    }
+
     s
 }
 
@@ -1292,6 +1752,12 @@ fn render_api_keys(server: &Server) -> String {
     s.push_str(&format!("\"total_keys\":{total},"));
     s.push_str(&format!("\"hits\":{hits},"));
     s.push_str(&format!("\"misses\":{misses},"));
+    let (aof_enabled, aof_size) = match &server.aof {
+        Some(a) => (true, a.size.load(Ordering::Relaxed)),
+        None => (false, 0),
+    };
+    s.push_str(&format!("\"aof_enabled\":{aof_enabled},"));
+    s.push_str(&format!("\"aof_size_bytes\":{aof_size},"));
     s.push_str("\"keys\":[");
     for (i, (key, ktype, size, count, ttl)) in entries.iter().enumerate() {
         if i > 0 {
@@ -1622,6 +2088,94 @@ fn config_port(var: &str, default: u16) -> u16 {
     env::var(var).ok().and_then(|v| v.parse::<u16>().ok()).unwrap_or(default)
 }
 
+/// AOF log path. Unset/empty -> AOF disabled (pure in-memory, the default).
+fn config_aof_path() -> Option<PathBuf> {
+    env::var("PICODB_AOF_PATH").ok().filter(|p| !p.is_empty()).map(PathBuf::from)
+}
+
+/// Durability policy for the AOF writer (default `everysec`).
+fn config_aof_fsync() -> Fsync {
+    env::var("PICODB_AOF_FSYNC").map(|v| Fsync::parse(&v)).unwrap_or(Fsync::EverySec)
+}
+
+/// Minimum AOF size before an automatic rewrite is considered (default 64 MiB).
+fn config_aof_rewrite_min() -> u64 {
+    env::var("PICODB_AOF_REWRITE_MIN_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(64 * 1024 * 1024)
+}
+
+/// Snapshot the live dataset and hand it to the writer thread for compaction.
+/// Returns false if AOF is off or a rewrite is already in flight. The snapshot is
+/// taken under the read lock, so it sits at a well-defined point in the log stream
+/// (every command logged before this call is already reflected).
+fn trigger_aof_rewrite(server: &Server) -> bool {
+    let Some(aof) = server.aof.as_ref() else {
+        return false;
+    };
+    if aof.rewriting.swap(true, Ordering::AcqRel) {
+        return false; // one already queued/running
+    }
+    let frames = {
+        let cache = lock_or_recover!(server.cache.read());
+        cache.dump_frames(now_secs())
+    };
+    if aof.tx.send(AofMsg::Rewrite(frames)).is_err() {
+        aof.rewriting.store(false, Ordering::Release);
+        return false;
+    }
+    true
+}
+
+/// Resolve when the process is asked to stop (Ctrl-C / SIGTERM). Used to flush
+/// the AOF durably before exit, so a clean restart never loses buffered writes.
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).ok();
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = async {
+                match term.as_mut() {
+                    Some(t) => { t.recv().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
+    }
+}
+
+/// Background task: auto-compact the AOF when it grows too large. Fires a rewrite
+/// once the log is both ≥ `min_bytes` and ≥ 2× its size after the last rewrite
+/// (Redis's default policy). Checks every 10s; a no-op when AOF is disabled.
+async fn aof_maintenance(server: Arc<Server>, min_bytes: u64) {
+    let mut interval = tokio::time::interval(Duration::from_secs(10));
+    interval.tick().await; // discard the immediate first tick
+    let mut base: u64 = 0; // AOF size after the last rewrite (0 => compact once past min)
+    let mut pending = false;
+    loop {
+        interval.tick().await;
+        let Some(aof) = server.aof.as_ref() else {
+            return;
+        };
+        let size = aof.size.load(Ordering::Relaxed);
+        if pending && !aof.rewriting.load(Ordering::Acquire) {
+            base = size; // rewrite finished: adopt the compacted size as the baseline
+            pending = false;
+        }
+        if !pending && size >= min_bytes && size >= base.saturating_mul(2) && trigger_aof_rewrite(&server) {
+            pending = true;
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cap = config_cap();
@@ -1629,6 +2183,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = config_bind();
     let port_engine = config_port("PICODB_ENGINE_PORT", DEFAULT_PORT_ENGINE);
     let port_http = config_port("PICODB_HTTP_PORT", DEFAULT_PORT_HTTP);
+    let aof_path = config_aof_path();
+    let aof_fsync = config_aof_fsync();
+    let aof_rewrite_min = config_aof_rewrite_min();
     let auth_enabled = auth.is_some();
     let auth_status = if auth_enabled {
         "enabled"
@@ -1639,7 +2196,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Single shared state. `std::sync::RwLock` (not tokio's async lock) is
     // deliberate: critical sections are pure in-memory ops with no `.await`
     // inside, so a blocking lock is faster and never starves the runtime.
-    let server = Arc::new(Server::new(cap, auth));
+    let mut server = Server::new(cap, auth);
+
+    // Persistence: replay the log to rebuild memory, THEN install the writer so
+    // the replayed commands aren't re-logged. Done before serving any traffic.
+    let aof_status = if let Some(path) = &aof_path {
+        match replay_aof(&server, path) {
+            Ok(n) => eprintln!("PicoDB: replayed {n} commands from AOF {}", path.display()),
+            Err(e) => {
+                eprintln!("PicoDB: cannot read AOF {}: {e}", path.display());
+                std::process::exit(1);
+            }
+        }
+        match spawn_aof_writer(path.clone(), aof_fsync) {
+            Ok(aof) => server.aof = Some(aof),
+            Err(e) => {
+                eprintln!("PicoDB: cannot open AOF {} for writing: {e}", path.display());
+                std::process::exit(1);
+            }
+        }
+        let policy = match aof_fsync {
+            Fsync::Always => "always",
+            Fsync::EverySec => "everysec",
+            Fsync::No => "no",
+        };
+        format!("{} (fsync {policy})", path.display())
+    } else {
+        "disabled".to_string()
+    };
+
+    let server = Arc::new(server);
 
     let engine = TcpListener::bind((bind.as_str(), port_engine)).await?;
     let http = TcpListener::bind((bind.as_str(), port_http)).await?;
@@ -1650,9 +2236,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     eprintln!(
-        "PicoDB up — engine {bind}:{port_engine} (binary) · dashboard http://{bind}:{port_http}/ · RAM cap {} MiB · auth: {auth_status}",
+        "PicoDB up — engine {bind}:{port_engine} (binary) · dashboard http://{bind}:{port_http}/ · RAM cap {} MiB · auth: {auth_status} · AOF: {aof_status}",
         cap / (1024 * 1024)
     );
+
+    // Background AOF compaction + durable flush on graceful shutdown (both
+    // no-ops when AOF is disabled).
+    if aof_path.is_some() {
+        tokio::spawn(aof_maintenance(Arc::clone(&server), aof_rewrite_min));
+
+        let shutdown_srv = Arc::clone(&server);
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            if let Some(aof) = shutdown_srv.aof.as_ref() {
+                aof.flush_blocking();
+            }
+            std::process::exit(0);
+        });
+    }
 
     // Binary engine accept loop (spawned so both listeners run concurrently).
     let engine_srv = Arc::clone(&server);

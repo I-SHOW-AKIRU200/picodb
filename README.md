@@ -199,6 +199,51 @@ authenticates with that same cookie. Regenerate a random token anytime with `./p
 - **Fastest path (apps/servers):** raw binary `SUBSCRIBE`/`PUBLISH` on `:7120` — no HTTP upgrade, no masking.
 - **Browsers:** WebSocket at `ws://127.0.0.1:7121/ws` carries the same pub/sub feed plus a live stats push every second (authenticated by the dashboard session cookie). WebSocket exists because browsers can't open raw TCP; it's the compatibility path, not the fast path.
 
+## Persistence (AOF)
+
+By default PicoDB is pure in-memory — a restart loses everything. Enable the
+**append-only file** to make data durable: every mutating command (`SET`, `DEL`,
+`HSET`, `LPUSH`, …) is appended to a log, and the log is replayed on startup to
+rebuild state. Same zero-dependency ethos — the log records are just the wire
+frames, so there's no separate on-disk format.
+
+```bash
+# .env
+PICODB_AOF_PATH=picodb.aof     # set a path to turn it on (unset = in-memory)
+PICODB_AOF_FSYNC=everysec      # durability policy (see below)
+```
+
+**Durability policy** — the deliberate speed-vs-safety tradeoff:
+
+| `PICODB_AOF_FSYNC` | On a process crash | On power loss / OS crash | Speed |
+|--------------------|--------------------|--------------------------|-------|
+| `everysec` *(default)* | loses nothing | loses ≤ 1 second | fast |
+| `always` | loses nothing | loses nothing¹ | bounded by disk fsync |
+| `no` | loses nothing | loses whatever the OS hadn't flushed | fastest |
+
+Writes reach the OS on every batch (so a killed process never loses acknowledged
+data); the policy governs how often PicoDB forces them onto the physical disk.
+A dedicated writer thread owns the file, so `fsync` never blocks the request path.
+On a clean shutdown (`SIGINT`/`SIGTERM`) the log is flushed durably before exit.
+
+¹ *`always` flushes immediately but does not gate the reply on the fsync, so it's
+"flush right away", not synchronous-commit.*
+
+**Compaction.** The log would grow forever, so PicoDB periodically **rewrites** it
+to the minimal set of commands that recreate the current state (like Redis's
+`BGREWRITEAOF`) — automatically once it passes `PICODB_AOF_REWRITE_MIN_BYTES`
+(default 64 MiB) *and* has doubled since the last rewrite, or on demand:
+
+```bash
+curl -X POST http://127.0.0.1:7121/aof/rewrite   # add -H "Authorization: Bearer <token>" if auth is on
+```
+
+TTLs survive restarts correctly (stored as absolute expiry, not reset), keys
+`DEL`eted or evicted before the crash stay gone, and a partially-written trailing
+record from a crash mid-write is skipped cleanly on replay. AOF status is exposed
+on `/metrics` (`picodb_aof_enabled`, `picodb_aof_size_bytes`,
+`picodb_aof_rewrites_total`) and in `/api/keys`.
+
 ## Configuration
 
 All runtime settings live in `.env` (copy from [`.env.example`](.env.example)) — no code changes needed, like `redis.conf`.
@@ -210,6 +255,9 @@ All runtime settings live in `.env` (copy from [`.env.example`](.env.example)) �
 | `PICODB_HTTP_PORT` | `7121` | TCP port for the dashboard / metrics / API / WebSocket. |
 | `PICODB_TOKEN` | *(unset)* | Shared access token. Set → auth enforced on all surfaces. Unset → auth disabled (loopback dev). |
 | `PICODB_MAX_BYTES` | `52428800` (50 MiB) | Hard RAM cap; oldest keys evicted (LRU) past it. |
+| `PICODB_AOF_PATH` | *(unset)* | Append-only log path. Set → persistence on; unset → in-memory only. |
+| `PICODB_AOF_FSYNC` | `everysec` | Durability policy: `everysec` \| `always` \| `no`. |
+| `PICODB_AOF_REWRITE_MIN_BYTES` | `67108864` (64 MiB) | Min log size before an auto-compaction. |
 
 > Exposing publicly (`PICODB_BIND=0.0.0.0`)? Always set `PICODB_TOKEN`, open the port in your host/cloud firewall, and put TLS in front (reverse proxy) — traffic is otherwise plaintext.
 
