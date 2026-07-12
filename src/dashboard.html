@@ -8,125 +8,255 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='180%20100%20640%20640'%3E%3Cg%20transform='translate(-33.83,-52.70)%20scale(0.5934718)'%3E%3Cpath%20fill='%234f8cff'%20fill-rule='evenodd'%20d='M%201405%20291%20L%201338%20291%20L%201337%20600%20L%201109%20473%20L%20937%20553%20L%20991%20601%20L%201105%20546%20L%201335%20679%20L%201337%20860%20L%201098%20993%20L%20898%20879%20L%20877%20825%20L%20878%20693%20L%20822%20647%20L%20809%20840%20L%20867%20945%20L%201113%201065%20L%201392%20904%20Z%20M%20933%20594%20L%20691%20473%20L%20406%20640%20L%20394%201228%20L%20460%201228%20L%20462%20941%20L%20689%201065%20L%20863%20984%20L%20810%20937%20L%20696%20993%20L%20468%20864%20L%20461%20684%20L%20704%20547%20L%20900%20661%20L%20923%20727%20L%20920%20854%20L%20979%20889%20L%20990%20699%20Z'/%3E%3C/g%3E%3C/svg%3E" />
 <style>
   :root {
-    --bg: #0b0f17; --panel: #131a26; --panel2: #0f1520; --line: #1f2a3a;
-    --text: #e6edf6; --muted: #8aa0bd; --accent: #4f8cff; --ok: #3fd07f;
-    --warn: #ffb454; --bad: #ff6b6b; --chip: #1b2636;
+    /* Surfaces — deep near-black bg, gray/slate bento tiles */
+    --bg: #090c12; --bg-glow: rgba(79,140,255,.10);
+    --tile: #141a24; --tile-2: #10151e; --tile-hover: #182030;
+    --line: #232c3b; --line-2: #303b4e;
+    /* Text — near-white with layered muting */
+    --text: #f4f7fb; --muted: #9aa8bd; --muted-2: #6b7688;
+    /* Brand + semantic */
+    --accent: #4f8cff; --accent-soft: rgba(79,140,255,.14);
+    --ok: #46d089; --warn: #ffb454; --bad: #ff6b6b;
+    --chip: #1b2230;
+    --radius: 16px; --radius-sm: 11px;
+    --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 12px 30px -18px rgba(0,0,0,.75);
   }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
-    margin: 0; background: radial-gradient(1200px 600px at 70% -10%, #16213a 0%, var(--bg) 55%);
-    color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    min-height: 100vh;
+    margin: 0; min-height: 100dvh; color: var(--text);
+    background:
+      radial-gradient(1100px 520px at 82% -12%, var(--bg-glow), transparent 60%),
+      var(--bg);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-  header {
-    display: flex; align-items: center; gap: 14px; padding: 20px 28px;
-    border-bottom: 1px solid var(--line);
+  a { color: var(--accent); text-decoration: none; }
+
+  /* ---- Top bar ---- */
+  .topbar {
+    display: flex; align-items: center; gap: 16px;
+    padding: 16px 24px; border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(9,12,18,.72); backdrop-filter: blur(12px);
   }
+  .brand { display: flex; align-items: center; gap: 12px; }
   .logo {
-    width: 38px; height: 38px; border-radius: 9px;
-    background: linear-gradient(135deg, #16323a, #0f2329);
-    display: grid; place-items: center; padding: 6px;
+    width: 40px; height: 40px; border-radius: 11px; padding: 7px;
+    background: linear-gradient(140deg, #1a2740, #101827);
+    border: 1px solid var(--line-2); display: grid; place-items: center;
   }
   .logo svg { width: 100%; height: 100%; display: block; }
-  h1 { font-size: 18px; margin: 0; font-weight: 700; }
-  h1 span { color: var(--muted); font-weight: 500; }
-  .wsbadge { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px;
-          color: var(--muted); padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; }
-  .livedot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); transition: background .3s; }
-  .wsbadge.on .livedot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-  .wsbadge.on { color: var(--ok); }
-  .wrap { padding: 24px 28px; max-width: 1100px; margin: 0 auto; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
-  .card {
-    background: linear-gradient(180deg, var(--panel), var(--panel2));
-    border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px;
+  .brand-name { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+  .brand-sub { font-size: 12px; color: var(--muted); margin-top: -1px; }
+  .nav { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .navlink {
+    color: var(--muted); font-size: 13px; font-weight: 500; padding: 7px 12px;
+    border-radius: 9px; transition: color .15s, background .15s;
   }
-  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
-  .card .value { font-size: 26px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
-  .card .value.small { font-size: 20px; }
-  .ratio { height: 6px; background: var(--chip); border-radius: 4px; margin-top: 12px; overflow: hidden; }
-  .ratio > i { display: block; height: 100%; background: var(--ok); width: 0%; transition: width .4s ease; }
-  .panel {
-    background: linear-gradient(180deg, var(--panel), var(--panel2));
-    border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+  .navlink:hover { color: var(--text); background: var(--chip); }
+  .ws {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 500;
+    color: var(--muted); padding: 7px 13px; border: 1px solid var(--line);
+    border-radius: 999px; background: var(--tile-2);
   }
-  .panel .head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); }
-  .panel .head h2 { font-size: 14px; margin: 0; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); margin-right: 7px; }
+  .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); transition: background .3s, box-shadow .3s; }
+  .ws.on { color: var(--ok); border-color: rgba(70,208,137,.35); }
+  .ws.on .ws-dot { background: var(--ok); box-shadow: 0 0 9px var(--ok); }
+
+  /* ---- Bento grid ---- */
+  .bento {
+    display: grid; gap: 16px; padding: 24px; max-width: 1200px; margin: 0 auto;
+    grid-template-columns: repeat(6, 1fr);
+    grid-auto-rows: minmax(0, auto);
+  }
+  .tile {
+    background: linear-gradient(180deg, var(--tile), var(--tile-2));
+    border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+    transition: border-color .2s ease, background .2s ease, transform .2s ease;
+  }
+  .kpi { grid-column: span 2; padding: 18px 20px; min-height: 118px;
+         display: flex; flex-direction: column; gap: 10px; }
+  .kpi:hover { border-color: var(--line-2); background: linear-gradient(180deg, var(--tile-hover), var(--tile-2)); }
+  .kpi-top { display: flex; align-items: center; justify-content: space-between; }
+  .kpi .label { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; }
+  .kpi .ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+             background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(79,140,255,.22); }
+  .kpi .ic svg { width: 16px; height: 16px; }
+  .kpi .ic.g { background: rgba(70,208,137,.14); color: var(--ok); border-color: rgba(70,208,137,.24); }
+  .kpi .ic.r { background: rgba(255,107,107,.13); color: var(--bad); border-color: rgba(255,107,107,.24); }
+  .kpi .value { font-size: 30px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .kpi .value.small { font-size: 22px; }
+  .ratio-tile { grid-column: span 2; }
+  .ratiobar { height: 7px; background: var(--chip); border-radius: 5px; margin-top: 4px; overflow: hidden; }
+  .ratiobar > i { display: block; height: 100%; width: 0%; border-radius: 5px;
+                  background: linear-gradient(90deg, var(--ok), #7ee6ad); transition: width .5s ease; }
+
+  /* ---- Panels ---- */
+  .panel { display: flex; flex-direction: column; overflow: hidden; }
+  .keys { grid-column: span 4; grid-row: span 2; }
+  .stream { grid-column: span 2; grid-row: span 2; }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 15px 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap;
+  }
+  .panel-head h2 { font-size: 14px; margin: 0; font-weight: 650; display: flex; align-items: center; gap: 9px; }
+  .panel-head h2 svg { width: 16px; height: 16px; color: var(--accent); }
+  .badge { font-size: 12px; font-weight: 500; color: var(--muted); padding: 4px 11px;
+           background: var(--chip); border: 1px solid var(--line); border-radius: 999px; font-variant-numeric: tabular-nums; }
+  .panel-body { overflow: auto; }
+  .keys .panel-body { max-height: 460px; }
+
+  /* Table */
   table { width: 100%; border-collapse: collapse; }
+  thead th { position: sticky; top: 0; background: var(--tile-2); z-index: 1; }
   th, td { text-align: left; padding: 11px 18px; font-variant-numeric: tabular-nums; }
-  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
-  tbody tr { border-top: 1px solid var(--line); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  tbody tr { border-top: 1px solid var(--line); transition: background .12s; }
   tbody tr:hover { background: rgba(79,140,255,.06); }
   .key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #cfe0ff; }
-  .chip { padding: 2px 9px; border-radius: 999px; font-size: 12px; background: var(--chip); color: var(--muted); }
+  .chip { padding: 2.5px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--chip); color: var(--muted); }
   .chip.live { color: var(--warn); }
-  .chip.persist { color: var(--muted); }
-  .chip.type-string { color: #8aa0bd; }
-  .chip.type-hash { color: #4f8cff; }
-  .chip.type-list { color: #3fd07f; }
-  .chip.type-set { color: #ffb454; }
-  .empty { padding: 40px; text-align: center; color: var(--muted); }
-  footer { color: var(--muted); text-align: center; padding: 20px; font-size: 12px; }
-  a { color: var(--accent); text-decoration: none; }
+  .chip.persist { color: var(--muted-2); }
+  .chip.type-string { color: #9aa8bd; }
+  .chip.type-hash { color: #4f8cff; background: rgba(79,140,255,.12); }
+  .chip.type-list { color: #46d089; background: rgba(70,208,137,.12); }
+  .chip.type-set { color: #ffb454; background: rgba(255,180,84,.12); }
+  .empty { padding: 44px 20px; text-align: center; color: var(--muted-2); }
+
+  /* Stream controls + feed */
+  .stream-controls { display: flex; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .input {
+    flex: 1; min-width: 0; background: var(--chip); border: 1px solid var(--line);
+    color: var(--text); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12.5px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .input::placeholder { color: var(--muted-2); }
+  .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .btn {
+    appearance: none; border: 1px solid transparent; background: var(--accent); color: #fff;
+    font-weight: 600; font-size: 12.5px; padding: 8px 15px; border-radius: var(--radius-sm);
+    cursor: pointer; transition: filter .15s, transform .08s; white-space: nowrap;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #events { padding: 6px 8px; max-height: 460px; }
+  .evrow { padding: 8px 8px; border-top: 1px solid var(--line); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .evrow:first-child { border-top: 0; }
+  .evtime { color: var(--muted-2); }
+
+  footer { color: var(--muted); text-align: center; padding: 22px; font-size: 12px; }
+  footer a:hover { color: var(--text); }
+
+  @media (max-width: 1000px) {
+    .bento { grid-template-columns: repeat(4, 1fr); }
+    .kpi, .ratio-tile { grid-column: span 2; }
+    .keys, .stream { grid-column: span 4; grid-row: auto; }
+    .keys .panel-body, #events { max-height: 380px; }
+  }
+  @media (max-width: 560px) {
+    .topbar { padding: 14px 16px; }
+    .brand-sub { display: none; }
+    .bento { grid-template-columns: 1fr; padding: 16px; gap: 14px; }
+    .kpi, .ratio-tile, .keys, .stream { grid-column: 1 / -1; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
-  <header>
-    <div class="logo" title="PicoDB">
-      <svg viewBox="180 100 640 640" xmlns="http://www.w3.org/2000/svg" aria-label="PicoDB logo">
-        <g transform="translate(-33.83,-52.70) scale(0.5934718)">
-          <path fill="#4f8cff" fill-rule="evenodd"
-            d="M 1405 291 L 1338 291 L 1337 600 L 1109 473 L 937 553 L 991 601 L 1105 546 L 1335 679 L 1337 860 L 1098 993 L 898 879 L 877 825 L 878 693 L 822 647 L 809 840 L 867 945 L 1113 1065 L 1392 904 Z M 933 594 L 691 473 L 406 640 L 394 1228 L 460 1228 L 462 941 L 689 1065 L 863 984 L 810 937 L 696 993 L 468 864 L 461 684 L 704 547 L 900 661 L 923 727 L 920 854 L 979 889 L 990 699 Z"/>
-        </g>
-      </svg>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" title="PicoDB">
+        <svg viewBox="180 100 640 640" xmlns="http://www.w3.org/2000/svg" aria-label="PicoDB logo">
+          <g transform="translate(-33.83,-52.70) scale(0.5934718)">
+            <path fill="#4f8cff" fill-rule="evenodd"
+              d="M 1405 291 L 1338 291 L 1337 600 L 1109 473 L 937 553 L 991 601 L 1105 546 L 1335 679 L 1337 860 L 1098 993 L 898 879 L 877 825 L 878 693 L 822 647 L 809 840 L 867 945 L 1113 1065 L 1392 904 Z M 933 594 L 691 473 L 406 640 L 394 1228 L 460 1228 L 462 941 L 689 1065 L 863 984 L 810 937 L 696 993 L 468 864 L 461 684 L 704 547 L 900 661 L 923 727 L 920 854 L 979 889 L 990 699 Z"/>
+          </g>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">PicoDB</div>
+        <div class="brand-sub">live cache dashboard</div>
+      </div>
     </div>
-    <h1>PicoDB <span>· live cache dashboard</span></h1>
-    <span class="wsbadge" id="live"><span class="livedot"></span><span id="livetext">connecting…</span></span>
+    <nav class="nav">
+      <a class="navlink" href="/docs">Docs</a>
+      <a class="navlink" href="/metrics">Metrics</a>
+      <span class="ws" id="live"><span class="ws-dot"></span><span id="livetext">connecting…</span></span>
+    </nav>
   </header>
 
-  <div class="wrap">
-    <div class="cards">
-      <div class="card"><div class="label">Uptime</div><div class="value small" id="uptime">—</div></div>
-      <div class="card"><div class="label">Total Keys</div><div class="value" id="keys">—</div></div>
-      <div class="card"><div class="label">Memory</div><div class="value small" id="mem">—</div></div>
-      <div class="card"><div class="label">Hits</div><div class="value" id="hits">—</div></div>
-      <div class="card"><div class="label">Misses</div><div class="value" id="misses">—</div></div>
-      <div class="card">
-        <div class="label">Hit Ratio</div>
-        <div class="value small" id="ratio">—</div>
-        <div class="ratio"><i id="ratiobar"></i></div>
+  <main class="bento">
+    <!-- KPI tiles -->
+    <section class="tile kpi">
+      <div class="kpi-top"><span class="label">Uptime</span>
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
       </div>
-    </div>
+      <div class="value small" id="uptime">—</div>
+    </section>
+    <section class="tile kpi">
+      <div class="kpi-top"><span class="label">Total Keys</span>
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg></span>
+      </div>
+      <div class="value" id="keys">—</div>
+    </section>
+    <section class="tile kpi">
+      <div class="kpi-top"><span class="label">Memory</span>
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg></span>
+      </div>
+      <div class="value small" id="mem">—</div>
+    </section>
+    <section class="tile kpi">
+      <div class="kpi-top"><span class="label">Hits</span>
+        <span class="ic g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12l2.5 2.5L16 9"/></svg></span>
+      </div>
+      <div class="value" id="hits">—</div>
+    </section>
+    <section class="tile kpi">
+      <div class="kpi-top"><span class="label">Misses</span>
+        <span class="ic r"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></span>
+      </div>
+      <div class="value" id="misses">—</div>
+    </section>
+    <section class="tile kpi ratio-tile">
+      <div class="kpi-top"><span class="label">Hit Ratio</span>
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 7 4-14 3 7h4"/></svg></span>
+      </div>
+      <div class="value small" id="ratio">—</div>
+      <div class="ratiobar"><i id="ratiobar"></i></div>
+    </section>
 
-    <div class="panel">
-      <div class="head">
-        <h2><span class="dot"></span>Keys</h2>
-        <span class="chip" id="count">0 keys</span>
+    <!-- Keys table -->
+    <section class="tile panel keys">
+      <div class="panel-head">
+        <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>Keys</h2>
+        <span class="badge" id="count">0 keys</span>
       </div>
-      <table>
-        <thead><tr><th>Key</th><th>Type</th><th>Items</th><th>Size</th><th>TTL</th></tr></thead>
-        <tbody id="rows"><tr><td class="empty" colspan="3">Loading…</td></tr></tbody>
-      </table>
-    </div>
+      <div class="panel-body">
+        <table>
+          <thead><tr><th>Key</th><th>Type</th><th>Items</th><th>Size</th><th>TTL</th></tr></thead>
+          <tbody id="rows"><tr><td class="empty" colspan="5">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
 
-    <div class="panel" style="margin-top:24px">
-      <div class="head">
-        <h2><span class="dot"></span>Live Pub/Sub Stream</h2>
-        <span style="display:flex;gap:8px">
-          <input id="chan" placeholder="channel" value="news"
-                 style="background:var(--chip);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:5px 10px;font-size:12px"/>
-          <button id="subbtn"
-                  style="background:var(--accent);border:0;color:#fff;border-radius:8px;padding:5px 12px;font-size:12px;cursor:pointer">Subscribe</button>
-        </span>
+    <!-- Live pub/sub -->
+    <section class="tile panel stream">
+      <div class="panel-head">
+        <h2><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 000 8.4M16.2 7.8a6 6 0 010 8.4M5 5a9.5 9.5 0 000 14M19 5a9.5 9.5 0 010 14"/></svg>Live Pub/Sub</h2>
       </div>
-      <div id="events" style="max-height:220px;overflow:auto;padding:6px 0">
+      <div class="stream-controls">
+        <input class="input" id="chan" placeholder="channel" value="news" aria-label="channel name"/>
+        <button class="btn" id="subbtn">Subscribe</button>
+      </div>
+      <div class="panel-body" id="events">
         <div class="empty">Subscribe to a channel, then PUBLISH to it on :7120 to see live messages.</div>
       </div>
-    </div>
-  </div>
+    </section>
+  </main>
 
-  <footer>PicoDB · binary engine on :7120 · <a href="/metrics">/metrics</a> · <a href="/api/keys">/api/keys</a></footer>
+  <footer>PicoDB · binary engine on :7120 · <a href="/docs">Docs</a> · <a href="/metrics">/metrics</a> · <a href="/api/keys">/api/keys</a></footer>
 
 <script>
 // Vanilla JS: live stats over WebSocket, TTL countdown ticks locally.
@@ -134,21 +264,19 @@ const $ = (id) => document.getElementById(id);
 let ttlBase = new Map();   // key -> remaining seconds at last fetch
 let ttlAt = 0;             // timestamp (ms) of last fetch, for local countdown
 
-// --- Auth token: remembered in localStorage; prompted for when the server
-// --- enforces auth (a 401 clears it and re-prompts). Empty string = no auth.
-function getToken() {
-  let t = localStorage.getItem("picodb_token");
-  if (t === null) { t = prompt("PicoDB access token (leave blank if auth is disabled):") || ""; localStorage.setItem("picodb_token", t); }
-  return t;
-}
-function clearToken() { localStorage.removeItem("picodb_token"); }
-function authHeaders() {
-  const t = localStorage.getItem("picodb_token") || "";
-  return t ? { "Authorization": "Bearer " + t } : {};
-}
-function tokenQuery() {
-  const t = localStorage.getItem("picodb_token") || "";
-  return t ? "?token=" + encodeURIComponent(t) : "";
+// --- Auth: the token is exchanged once at POST /login for an HttpOnly,
+// --- SameSite session cookie. The browser then attaches that cookie to every
+// --- request automatically — fetch, the WebSocket handshake, and plain
+// --- navigation to /metrics or /api/keys — so the token never appears in a
+// --- URL and is never stored in JS-readable storage. A 401 means the cookie
+// --- is missing/expired: prompt for the token and log in again.
+async function login() {
+  const t = prompt("PicoDB access token (leave blank if auth is disabled):") || "";
+  const r = await fetch("/login", {
+    method: "POST",
+    headers: t ? { "Authorization": "Bearer " + t } : {},
+  });
+  return r.ok;
 }
 
 function fmtBytes(n) {
@@ -207,8 +335,8 @@ function applyData(data) {
 // One-shot HTTP fallback (used before the socket is up / if WS is unavailable).
 async function fetchOnce() {
   try {
-    const r = await fetch("/api/keys", { cache: "no-store", headers: authHeaders() });
-    if (r.status === 401) { clearToken(); getToken(); return; } // wrong/absent token -> re-prompt
+    let r = await fetch("/api/keys", { cache: "no-store" }); // cookie sent automatically
+    if (r.status === 401 && await login()) r = await fetch("/api/keys", { cache: "no-store" });
     if (r.ok) applyData(await r.json());
   } catch (e) {}
 }
@@ -240,16 +368,16 @@ function logEvent(chan, text) {
   const box = $("events");
   if (box.querySelector(".empty")) box.innerHTML = "";
   const row = document.createElement("div");
-  row.style.cssText = "padding:6px 4px;border-top:1px solid var(--line);font-family:ui-monospace,monospace;font-size:12px";
+  row.className = "evrow";
   const t = new Date().toLocaleTimeString();
-  row.innerHTML = `<span style="color:var(--muted)">${t}</span> <span class="chip live">${escapeHtml(chan)}</span> ${escapeHtml(text)}`;
+  row.innerHTML = `<span class="evtime">${t}</span> <span class="chip live">${escapeHtml(chan)}</span> ${escapeHtml(text)}`;
   box.prepend(row);
   while (box.children.length > 50) box.removeChild(box.lastChild);
 }
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(`${proto}//${location.host}/ws${tokenQuery()}`);
+  ws = new WebSocket(`${proto}//${location.host}/ws`); // session cookie sent on same-origin handshake
   ws.binaryType = "arraybuffer";
   setLive(false, "connecting…");
 
@@ -277,10 +405,13 @@ $("subbtn").onclick = () => {
   if (curChannel) { resubscribe(); logEvent("system", `subscribed to “${curChannel}”`); }
 };
 
-getToken();        // ensure a token (or blank) is chosen before first request
-fetchOnce();       // instant first paint
-connect();         // real-time thereafter
-setInterval(tick, 1000);
+// Log in (establishing the session cookie) before opening the WebSocket, so the
+// handshake carries the cookie and the footer links to /metrics & /api/keys work.
+(async () => {
+  await fetchOnce();  // instant first paint; prompts + logs in if auth is enabled
+  connect();          // real-time thereafter
+  setInterval(tick, 1000);
+})();
 </script>
 </body>
 </html>

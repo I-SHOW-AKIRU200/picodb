@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PicoDB — Docs</title>
+<!-- Favicon: PicoDB "PD" mark, embedded (self-contained, no extra request) -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='180%20100%20640%20640'%3E%3Cg%20transform='translate(-33.83,-52.70)%20scale(0.5934718)'%3E%3Cpath%20fill='%234f8cff'%20fill-rule='evenodd'%20d='M%201405%20291%20L%201338%20291%20L%201337%20600%20L%201109%20473%20L%20937%20553%20L%20991%20601%20L%201105%20546%20L%201335%20679%20L%201337%20860%20L%201098%20993%20L%20898%20879%20L%20877%20825%20L%20878%20693%20L%20822%20647%20L%20809%20840%20L%20867%20945%20L%201113%201065%20L%201392%20904%20Z%20M%20933%20594%20L%20691%20473%20L%20406%20640%20L%20394%201228%20L%20460%201228%20L%20462%20941%20L%20689%201065%20L%20863%20984%20L%20810%20937%20L%20696%20993%20L%20468%20864%20L%20461%20684%20L%20704%20547%20L%20900%20661%20L%20923%20727%20L%20920%20854%20L%20979%20889%20L%20990%20699%20Z'/%3E%3C/g%3E%3C/svg%3E" />
+<style>
+  :root {
+    --bg: #090c12; --bg-glow: rgba(79,140,255,.10);
+    --tile: #141a24; --tile-2: #10151e; --line: #232c3b; --line-2: #303b4e;
+    --text: #f4f7fb; --muted: #9aa8bd; --muted-2: #6b7688;
+    --accent: #4f8cff; --accent-soft: rgba(79,140,255,.14); --ok: #46d089;
+    --warn: #ffb454; --bad: #ff6b6b; --chip: #1b2230;
+    --radius: 16px; --radius-sm: 10px;
+    --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 12px 30px -18px rgba(0,0,0,.75);
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; min-height: 100dvh; color: var(--text);
+    background:
+      radial-gradient(1100px 520px at 82% -12%, var(--bg-glow), transparent 60%),
+      var(--bg);
+    font: 14px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 16px 24px;
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(9,12,18,.72); backdrop-filter: blur(12px);
+  }
+  .logo {
+    width: 40px; height: 40px; border-radius: 11px; padding: 7px;
+    background: linear-gradient(140deg, #1a2740, #101827);
+    border: 1px solid var(--line-2); display: grid; place-items: center;
+  }
+  .logo svg { width: 100%; height: 100%; display: block; }
+  h1 { font-size: 16px; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+  h1 span { color: var(--muted); font-weight: 500; }
+  .toplink { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500;
+             color: var(--muted); padding: 7px 13px; border: 1px solid var(--line); border-radius: 999px;
+             background: var(--tile-2); transition: color .15s, border-color .15s; }
+  .toplink:hover { color: var(--text); border-color: var(--line-2); }
+  .wrap { padding: 28px 24px; max-width: 960px; margin: 0 auto; }
+
+  /* Layout: sticky table-of-contents beside the content on wide screens. */
+  .layout { display: grid; grid-template-columns: 200px 1fr; gap: 28px; align-items: start; }
+  nav.toc { position: sticky; top: 84px; font-size: 13px;
+            background: linear-gradient(180deg, var(--tile), var(--tile-2));
+            border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; box-shadow: var(--shadow); }
+  nav.toc a { display: block; color: var(--muted); padding: 7px 12px; border-radius: 8px; transition: color .15s, background .15s; }
+  nav.toc a:hover { color: var(--text); background: var(--chip); }
+  @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } nav.toc { position: static; margin-bottom: 4px; } }
+
+  /* Each documentation section is its own gray bento card. */
+  section {
+    background: linear-gradient(180deg, var(--tile), var(--tile-2));
+    border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+    padding: 20px 22px; margin-bottom: 18px; scroll-margin-top: 84px;
+  }
+  h2 { font-size: 16px; margin: 0 0 10px; display: flex; align-items: center; gap: 9px; font-weight: 650; }
+  h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 9px var(--accent); }
+  h3 { font-size: 13.5px; margin: 18px 0 6px; color: var(--text); font-weight: 600; }
+  p, li { color: #c8d5e8; }
+  .lead { color: var(--muted); margin: 0 0 20px; font-size: 15px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+         background: var(--chip); padding: 1.5px 6px; border-radius: 5px; color: #cfe0ff; }
+  pre {
+    background: #0c1017;
+    border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px 16px;
+    overflow-x: auto; position: relative;
+  }
+  pre code { background: none; padding: 0; color: #dbe7fb; font-size: 12.5px; line-height: 1.7; }
+  pre .cm { color: var(--muted-2); }       /* comment  */
+  pre .kw { color: var(--accent); }        /* keyword  */
+  pre .st { color: var(--ok); }            /* string   */
+  .copy { position: absolute; top: 8px; right: 8px; background: var(--chip); border: 1px solid var(--line);
+          color: var(--muted); border-radius: 7px; padding: 4px 10px; font-size: 11px; cursor: pointer;
+          transition: color .15s, border-color .15s; }
+  .copy:hover { color: var(--text); border-color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 2px; font-size: 13px; }
+  th, td { text-align: left; padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; border-top: 0; }
+  tbody tr:hover { background: rgba(79,140,255,.05); }
+  td code { white-space: nowrap; }
+  .note { border-left: 3px solid var(--accent); background: var(--accent-soft);
+          padding: 11px 14px; border-radius: 0 10px 10px 0; margin: 14px 0 2px; color: #d3e0f2; }
+  .warn { border-left-color: var(--warn); background: rgba(255,180,84,.08); }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500; background: var(--chip); color: var(--muted); }
+  footer { color: var(--muted); text-align: center; padding: 28px 20px; font-size: 12px; }
+  footer a:hover { color: var(--text); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo" title="PicoDB">
+      <svg viewBox="180 100 640 640" xmlns="http://www.w3.org/2000/svg" aria-label="PicoDB logo">
+        <g transform="translate(-33.83,-52.70) scale(0.5934718)">
+          <path fill="#4f8cff" fill-rule="evenodd"
+            d="M 1405 291 L 1338 291 L 1337 600 L 1109 473 L 937 553 L 991 601 L 1105 546 L 1335 679 L 1337 860 L 1098 993 L 898 879 L 877 825 L 878 693 L 822 647 L 809 840 L 867 945 L 1113 1065 L 1392 904 Z M 933 594 L 691 473 L 406 640 L 394 1228 L 460 1228 L 462 941 L 689 1065 L 863 984 L 810 937 L 696 993 L 468 864 L 461 684 L 704 547 L 900 661 L 923 727 L 920 854 L 979 889 L 990 699 Z"/>
+        </g>
+      </svg>
+    </div>
+    <h1>PicoDB <span>· documentation</span></h1>
+    <a class="toplink" href="/">← Dashboard</a>
+  </header>
+
+  <div class="wrap">
+    <p class="lead">A fast, single-binary in-memory key/value cache. This page covers how to set it
+    up, connect with the <code>picodb://</code> URI, use the data types, and configure auth &amp; security.</p>
+
+    <div class="layout">
+      <nav class="toc">
+        <a href="#setup">Setup</a>
+        <a href="#uri">Connection URI</a>
+        <a href="#clients">Client libraries</a>
+        <a href="#types">Data types</a>
+        <a href="#auth">Authentication</a>
+        <a href="#http">Dashboard &amp; HTTP API</a>
+        <a href="#config">Configuration</a>
+        <a href="#security">Security</a>
+      </nav>
+
+      <div class="content">
+
+        <section id="setup">
+          <h2><span class="dot"></span>Setup</h2>
+          <p>One-line install — clones the repo, installs Rust if needed, builds, and generates an access token into <code>.env</code>:</p>
+          <pre><code>curl -fsSL https://raw.githubusercontent.com/I-SHOW-AKIRU200/picodb/main/install.sh | bash</code></pre>
+          <p>Or clone and drive the interactive CLI manually:</p>
+          <pre><code><span class="kw">git</span> clone https://github.com/I-SHOW-AKIRU200/picodb.git &amp;&amp; <span class="kw">cd</span> picodb &amp;&amp; ./picodb</code></pre>
+          <p>The CLI is fully scriptable too:</p>
+          <pre><code>./picodb setup     <span class="cm"># install Rust (if needed), build, generate token</span>
+./picodb run       <span class="cm"># start the server (loads .env)</span>
+./picodb test      <span class="cm"># run the integration tests</span>
+./picodb token     <span class="cm"># regenerate the access token</span>
+./picodb status    <span class="cm"># build / auth / config status</span></code></pre>
+          <p>Once running, open the dashboard at <a id="dashUrl" href="/">this address</a> and paste the token
+          from <code>.env</code> when prompted. Two ports are exposed:</p>
+          <table>
+            <tr><th>Port</th><th>Purpose</th></tr>
+            <tr><td><code>7120</code></td><td>Raw binary wire protocol — the database engine.</td></tr>
+            <tr><td><code>7121</code></td><td>HTTP dashboard, <code>/metrics</code>, <code>/api/keys</code>, and WebSocket <code>/ws</code>.</td></tr>
+          </table>
+        </section>
+
+        <section id="uri">
+          <h2><span class="dot"></span>Connection URI</h2>
+          <p>Clients connect to the <b>engine port (7120)</b> using a <code>picodb://</code> URI:</p>
+          <pre><code>picodb://[username:password@]host[:port]     <span class="cm"># default port 7120</span></code></pre>
+          <p>The part before <code>@</code> is your <b>auth secret</b>. It must match the server's
+          <code>PICODB_TOKEN</code>, or its <code>PICODB_USERNAME</code>/<code>PICODB_PASSWORD</code>.
+          With a single shared token, leave the username empty:</p>
+          <pre><code id="uriExample">picodb://:&lt;token&gt;@HOST:7120</code></pre>
+          <div class="note">The <code>picodb://</code> URI is a <b>client-side convention</b> the example clients
+          parse (host + port + AUTH). The server itself speaks the raw binary protocol — it doesn't parse URIs.</div>
+        </section>
+
+        <section id="clients">
+          <h2><span class="dot"></span>Client libraries</h2>
+          <p>Zero-dependency reference clients ship in the repo: <code>examples/client.py</code> and <code>examples/client.js</code>.</p>
+          <h3>Python</h3>
+          <pre><code><span class="kw">from</span> client <span class="kw">import</span> PicoDB
+db = PicoDB.from_uri(<span class="st">"picodb://:&lt;token&gt;@localhost:7120"</span>)
+db.set(<span class="st">"user:1"</span>, <span class="st">"alice"</span>, ttl=<span class="st">3600</span>)
+<span class="kw">print</span>(db.get(<span class="st">"user:1"</span>))          <span class="cm"># b'alice'</span>
+db.delete(<span class="st">"user:1"</span>)</code></pre>
+          <h3>Node.js</h3>
+          <pre><code><span class="kw">const</span> { PicoDB } = require(<span class="st">"./client"</span>);
+<span class="kw">const</span> db = <span class="kw">await</span> PicoDB.connect(<span class="st">"picodb://:&lt;token&gt;@localhost:7120"</span>);
+<span class="kw">await</span> db.set(<span class="st">"user:1"</span>, <span class="st">"alice"</span>, <span class="st">3600</span>);
+console.log((<span class="kw">await</span> db.get(<span class="st">"user:1"</span>)).toString());  <span class="cm">// "alice"</span>
+db.close();</code></pre>
+        </section>
+
+        <section id="types">
+          <h2><span class="dot"></span>Data types</h2>
+          <p>Beyond plain strings, PicoDB supports Redis-style <b>hashes</b>, <b>lists</b>, and <b>sets</b>.
+          A key holds one type; the wrong command on a key returns a <code>WRONGTYPE</code> error, and
+          collections that become empty are deleted automatically.</p>
+          <table>
+            <tr><th>Type</th><th>Commands</th></tr>
+            <tr><td><span class="pill">string</span></td><td><code>SET</code> (TTL) · <code>GET</code> · <code>DEL</code></td></tr>
+            <tr><td><span class="pill">hash</span></td><td><code>HSET</code> · <code>HGET</code> · <code>HDEL</code> · <code>HGETALL</code> · <code>HLEN</code></td></tr>
+            <tr><td><span class="pill">list</span></td><td><code>LPUSH</code> · <code>RPUSH</code> · <code>LPOP</code> · <code>RPOP</code> · <code>LRANGE</code> · <code>LLEN</code></td></tr>
+            <tr><td><span class="pill">set</span></td><td><code>SADD</code> · <code>SREM</code> · <code>SMEMBERS</code> · <code>SISMEMBER</code> · <code>SCARD</code></td></tr>
+            <tr><td><span class="pill">any</span></td><td><code>TYPE</code> · <code>DEL</code> · <code>FLUSH</code></td></tr>
+          </table>
+          <pre><code><span class="cm"># hashes</span>
+db.hset(<span class="st">"user:1"</span>, <span class="st">"email"</span>, <span class="st">"a@x.com"</span>);  db.hgetall(<span class="st">"user:1"</span>)
+<span class="cm"># lists</span>
+db.rpush(<span class="st">"queue"</span>, <span class="st">"a"</span>, <span class="st">"b"</span>);  db.lrange(<span class="st">"queue"</span>, <span class="st">0</span>, -<span class="st">1</span>)
+<span class="cm"># sets</span>
+db.sadd(<span class="st">"tags"</span>, <span class="st">"x"</span>, <span class="st">"y"</span>, <span class="st">"x"</span>);  db.scard(<span class="st">"tags"</span>)      <span class="cm"># 2 (deduped)</span>
+db.type(<span class="st">"user:1"</span>)   <span class="cm"># 'hash' | 'list' | 'set' | 'string' | 'none'</span></code></pre>
+        </section>
+
+        <section id="auth">
+          <h2><span class="dot"></span>Authentication</h2>
+          <p>One shared secret guards every surface. Set it in <code>.env</code> two interchangeable ways:</p>
+          <table>
+            <tr><th>Style</th><th><code>.env</code></th><th>Connect with</th></tr>
+            <tr><td>Single token</td><td><code>PICODB_TOKEN=&lt;token&gt;</code></td><td><code>picodb://:&lt;token&gt;@host:7120</code></td></tr>
+            <tr><td>User + password</td><td><code>PICODB_USERNAME=admin</code><br><code>PICODB_PASSWORD=secret</code></td><td><code>picodb://admin:secret@host:7120</code></td></tr>
+          </table>
+          <p>How each surface authenticates:</p>
+          <ul>
+            <li><b>Binary engine (7120)</b> — send the <code>AUTH</code> command with the token before other commands (the clients do this for you).</li>
+            <li><b>HTTP API (7121)</b> — send <code>Authorization: Bearer &lt;token&gt;</code> (for <code>curl</code> / Prometheus).</li>
+            <li><b>Browser dashboard</b> — enter the token once; it is exchanged at <code>POST /login</code> for an
+            <code>HttpOnly</code>, <code>SameSite=Strict</code> session cookie. The token is <b>never</b> placed in a URL.</li>
+          </ul>
+          <div class="note">Regenerate a fresh random token anytime with <code>./picodb token</code>.</div>
+        </section>
+
+        <section id="http">
+          <h2><span class="dot"></span>Dashboard &amp; HTTP API</h2>
+          <p>Everything on port <code>7121</code>:</p>
+          <table>
+            <tr><th>Route</th><th>What it returns</th></tr>
+            <tr><td><code>GET /</code></td><td>The live dashboard (open; exposes no cache data).</td></tr>
+            <tr><td><code>GET /docs</code></td><td>This page.</td></tr>
+            <tr><td><code>POST /login</code></td><td>Exchange a Bearer token for the session cookie.</td></tr>
+            <tr><td><code>POST /logout</code></td><td>Clear the session cookie.</td></tr>
+            <tr><td><code>GET /metrics</code></td><td>Prometheus exposition <span class="pill">auth</span></td></tr>
+            <tr><td><code>GET /api/keys</code></td><td>JSON snapshot of all keys + stats <span class="pill">auth</span></td></tr>
+            <tr><td><code>GET /ws</code></td><td>WebSocket: live stats push + pub/sub bridge <span class="pill">auth</span></td></tr>
+          </table>
+          <h3>Scrape metrics with a Bearer token</h3>
+          <pre><code>curl -H <span class="st">"Authorization: Bearer &lt;token&gt;"</span> http://HOST:7121/metrics</code></pre>
+          <p>For Prometheus, set <code>authorization: { type: Bearer, credentials: &lt;token&gt; }</code> on the scrape job.</p>
+        </section>
+
+        <section id="config">
+          <h2><span class="dot"></span>Configuration</h2>
+          <p>All runtime settings live in <code>.env</code> (copy from <code>.env.example</code>) — no code changes needed.</p>
+          <table>
+            <tr><th>Env var</th><th>Default</th><th>Meaning</th></tr>
+            <tr><td><code>PICODB_BIND</code></td><td><code>127.0.0.1</code></td><td>Bind address. <code>0.0.0.0</code> exposes on all interfaces (public).</td></tr>
+            <tr><td><code>PICODB_ENGINE_PORT</code></td><td><code>7120</code></td><td>TCP port for the raw binary engine.</td></tr>
+            <tr><td><code>PICODB_HTTP_PORT</code></td><td><code>7121</code></td><td>TCP port for the dashboard / metrics / API / WebSocket.</td></tr>
+            <tr><td><code>PICODB_TOKEN</code></td><td><span class="pill">unset</span></td><td>Shared access token. Set → auth enforced everywhere. Unset → auth disabled (loopback dev).</td></tr>
+            <tr><td><code>PICODB_MAX_BYTES</code></td><td><code>52428800</code></td><td>Hard RAM cap (50 MiB); oldest keys evicted (LRU) past it.</td></tr>
+          </table>
+        </section>
+
+        <section id="security">
+          <h2><span class="dot"></span>Security</h2>
+          <ul>
+            <li><b>Token auth</b> on the engine, HTTP API, and WebSocket, with a constant-time comparison; the token is never logged.</li>
+            <li><b>No token in URLs</b> — the dashboard uses an <code>HttpOnly</code> + <code>SameSite=Strict</code> cookie, so the secret can't leak via logs, history, or <code>Referer</code>, and JS/XSS can't read it.</li>
+            <li><b>No built-in TLS.</b> Traffic is plaintext on the wire — for untrusted networks, terminate TLS at a reverse proxy (nginx / caddy) in front of <code>:7121</code> and <code>:7120</code>.</li>
+          </ul>
+          <div class="note warn">Exposing publicly (<code>PICODB_BIND=0.0.0.0</code>)? Always set <code>PICODB_TOKEN</code>,
+          open the port in your firewall, and put TLS in front — otherwise the token travels in cleartext.</div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <footer>PicoDB · <a href="/">Dashboard</a> · <a href="/metrics">/metrics</a> · <a href="/api/keys">/api/keys</a></footer>
+
+<script>
+// Fill the real host into the connection examples so copy-paste just works.
+(function () {
+  const host = location.hostname || "localhost";
+  document.querySelectorAll("code, a#dashUrl").forEach((el) => {
+    if (el.id === "dashUrl") { el.textContent = location.origin + "/"; el.setAttribute("href", "/"); return; }
+    if (el.innerHTML.indexOf("HOST") !== -1) el.innerHTML = el.innerHTML.replaceAll("HOST", host);
+  });
+  // Add a copy button to every code block.
+  document.querySelectorAll("pre").forEach((pre) => {
+    const btn = document.createElement("button");
+    btn.className = "copy"; btn.textContent = "copy";
+    btn.onclick = () => {
+      navigator.clipboard.writeText(pre.querySelector("code").innerText).then(() => {
+        btn.textContent = "copied"; setTimeout(() => (btn.textContent = "copy"), 1200);
+      });
+    };
+    pre.appendChild(btn);
+  });
+})();
+</script>
+</body>
+</html>

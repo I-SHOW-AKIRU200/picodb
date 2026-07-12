@@ -1003,6 +1003,9 @@ async fn subscribe_loop(mut stream: TcpStream, server: Arc<Server>, channel: Vec
 /// The dashboard page is baked into the binary at compile time.
 const DASHBOARD_HTML: &str = include_str!("dashboard.html");
 
+/// The documentation page (setup, URI, clients, config) — also baked in.
+const DOCS_HTML: &str = include_str!("docs.html");
+
 /// Minimal, allocation-light HTTP/1.1 handler. Reads until the end of headers
 /// (`\r\n\r\n`), parses only the request line, and routes on the path. Any
 /// malformed input yields a clean 400 rather than a panic.
@@ -1045,11 +1048,15 @@ async fn handle_http_conn(mut stream: TcpStream, server: Arc<Server>) {
 
     // Route (ignore any query string on the path).
     let route = path.split('?').next().unwrap_or("/");
+    let method = parse_request_method(&req).unwrap_or_default();
 
     // Auth gate for data-bearing routes. `/` (the static shell) stays open so
     // the browser can load and prompt for a token — it exposes no cache data.
+    // Credentials come from an `Authorization: Bearer` header (API clients,
+    // Prometheus) or the HttpOnly session cookie set by `/login` (browser) —
+    // never from the URL, so the token can't leak into logs/history/Referer.
     let authorized = server.auth.is_none() || {
-        match http_token(&req, &path) {
+        match http_token(&req) {
             Some(tok) => server.token_ok(tok.as_bytes()),
             None => false,
         }
@@ -1085,6 +1092,25 @@ async fn handle_http_conn(mut stream: TcpStream, server: Arc<Server>) {
         "/" => {
             let _ = write_http(&mut stream, 200, "text/html; charset=utf-8", DASHBOARD_HTML.as_bytes()).await;
         }
+        // Documentation page — open, like `/`; it exposes no cache data.
+        "/docs" => {
+            let _ = write_http(&mut stream, 200, "text/html; charset=utf-8", DOCS_HTML.as_bytes()).await;
+        }
+        // Exchange a verified token for an HttpOnly session cookie. The token
+        // is presented in the Authorization header (never the URL); on success
+        // the browser stores the cookie and authenticates every later request
+        // — fetch, WebSocket, and plain navigation — automatically.
+        "/login" if method == "POST" && authorized => {
+            let tok = http_token(&req).unwrap_or_default();
+            let _ = write_http_session(&mut stream, &session_cookie(&tok, true)).await;
+        }
+        "/login" if method == "POST" => {
+            let _ = write_http(&mut stream, 401, "text/plain", b"Unauthorized").await;
+        }
+        // Drop the session cookie.
+        "/logout" if method == "POST" => {
+            let _ = write_http_session(&mut stream, &session_cookie("", false)).await;
+        }
         "/metrics" if authorized => {
             let body = render_metrics(&server);
             let _ = write_http(&mut stream, 200, "text/plain; version=0.0.4", body.as_bytes()).await;
@@ -1102,23 +1128,48 @@ async fn handle_http_conn(mut stream: TcpStream, server: Arc<Server>) {
     }
 }
 
-/// Extract an auth token from a request: `Authorization: Bearer <t>` header, or
-/// a `?token=<t>` query parameter on the target (browsers/WS can't set headers
-/// on some requests, so the query form is the fallback).
-fn http_token(req: &[u8], target: &str) -> Option<String> {
+/// Extract an auth token from a request: an `Authorization: Bearer <t>` header
+/// (API clients, Prometheus) or the `picodb_session` cookie set by `/login`
+/// (browser). The token is deliberately never read from the URL, so it cannot
+/// leak into access logs, browser history, or `Referer` headers.
+fn http_token(req: &[u8]) -> Option<String> {
     if let Some(h) = header_value(req, "authorization") {
         if let Some(rest) = h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer ")) {
             return Some(rest.trim().to_string());
         }
     }
-    if let Some(q) = target.split('?').nth(1) {
-        for pair in q.split('&') {
-            if let Some(v) = pair.strip_prefix("token=") {
-                return Some(v.to_string());
-            }
+    cookie_value(req, "picodb_session")
+}
+
+/// Read a single named cookie from the `Cookie` request header.
+fn cookie_value(req: &[u8], name: &str) -> Option<String> {
+    let header = header_value(req, "cookie")?;
+    let prefix = format!("{name}=");
+    for pair in header.split(';') {
+        if let Some(v) = pair.trim().strip_prefix(&prefix) {
+            return Some(v.to_string());
         }
     }
     None
+}
+
+/// Build the `Set-Cookie` value for the session. `set = true` persists the
+/// token for a day; `set = false` clears it (logout). Flags: `HttpOnly` keeps
+/// it out of reach of JS/XSS, `SameSite=Strict` blocks cross-site (CSRF) sends.
+/// (`Secure` is omitted so it works over plain HTTP; front with TLS in prod.)
+fn session_cookie(token: &str, set: bool) -> String {
+    if set {
+        format!("picodb_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400")
+    } else {
+        "picodb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0".to_string()
+    }
+}
+
+/// Extract the request method (first token of the request line).
+fn parse_request_method(req: &[u8]) -> Option<String> {
+    let line_end = find_subslice(req, b"\r\n")?;
+    let line = std::str::from_utf8(&req[..line_end]).ok()?;
+    line.split(' ').next().map(str::to_string)
 }
 
 /// Extract the request target (path) from the raw request bytes.
@@ -1171,6 +1222,19 @@ async fn write_http(stream: &mut TcpStream, status: u16, ctype: &str, body: &[u8
     );
     stream.write_all(head.as_bytes()).await?;
     stream.write_all(body).await?;
+    stream.flush().await
+}
+
+/// Write a 204 response carrying a `Set-Cookie` header (login / logout). No
+/// body, so no `Content-Length` is needed.
+async fn write_http_session(stream: &mut TcpStream, cookie: &str) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 204 No Content\r\n\
+         Set-Cookie: {cookie}\r\n\
+         Cache-Control: no-store\r\n\
+         Connection: close\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).await?;
     stream.flush().await
 }
 

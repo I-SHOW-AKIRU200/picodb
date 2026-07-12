@@ -189,13 +189,15 @@ Two interchangeable ways to set the secret in `.env`:
 | Single token | `PICODB_TOKEN=<token>` | `picodb://:<token>@host:7120` |
 | User + password | `PICODB_USERNAME=admin`<br>`PICODB_PASSWORD=secret` | `picodb://admin:secret@host:7120` |
 
-The same secret authenticates the HTTP dashboard (`Authorization: Bearer <secret>` or `?token=<secret>`)
-and the WebSocket (`?token=<secret>`). Regenerate a random token anytime with `./picodb token`.
+The same secret authenticates the HTTP surfaces. API clients send `Authorization: Bearer <secret>`
+(e.g. Prometheus scraping `/metrics`); the browser dashboard exchanges the token once at `POST /login`
+for an `HttpOnly`, `SameSite=Strict` session cookie — the token is never placed in a URL. The WebSocket
+authenticates with that same cookie. Regenerate a random token anytime with `./picodb token`.
 
 ## Real-time
 
 - **Fastest path (apps/servers):** raw binary `SUBSCRIBE`/`PUBLISH` on `:7120` — no HTTP upgrade, no masking.
-- **Browsers:** WebSocket at `ws://127.0.0.1:7121/ws` carries the same pub/sub feed plus a live stats push every second. (WebSocket exists because browsers can't open raw TCP; it's the compatibility path, not the fast path.)
+- **Browsers:** WebSocket at `ws://127.0.0.1:7121/ws` carries the same pub/sub feed plus a live stats push every second (authenticated by the dashboard session cookie). WebSocket exists because browsers can't open raw TCP; it's the compatibility path, not the fast path.
 
 ## Configuration
 
