@@ -16,6 +16,7 @@
 - **Tiny**: ~2.3 MB idle RAM, ~540 KB stripped binary.
 - **Fast**: ~16–22 µs GET latency and **3.2M+ pipelined ops/s** on loopback (beats Redis latency in local tests).
 - **Zero deps**: only `tokio` (minimal features) + the standard library. The binary protocol parser, HTTP/1.1 server, WebSocket (RFC 6455), SHA-1, base64, and JSON are all hand-rolled.
+- **Redis-style data types**: strings, **hashes**, **lists**, and **sets** — not just plain key/value.
 - **Batteries included**: TTL + O(1) LRU eviction, pub/sub, a live web dashboard, Prometheus `/metrics`, and token auth.
 
 > Not a full Redis replacement — no persistence, clustering, or rich data types. It's a fast, small, volatile cache with a real-time dashboard.
@@ -76,7 +77,8 @@ Fixed **11-byte** big-endian header, then key, then value:
  offset  size  field
  ------  ----  ----------------------------------------
    0      1    Action  (0x01 SET | 0x02 GET | 0x03 DEL | 0x04 FLUSH
-                        | 0x05 SUBSCRIBE | 0x06 PUBLISH | 0x07 AUTH)
+                        | 0x05 SUBSCRIBE | 0x06 PUBLISH | 0x07 AUTH | 0x08 TYPE
+                        | 0x10-0x14 hash | 0x20-0x25 list | 0x30-0x34 set)
    1      2    Key Length    u16
    3      4    Value Length  u32
    7      4    TTL seconds   u32  (0 = no expiry; SET only)
@@ -140,6 +142,43 @@ db.close();
 
 > Note: the `picodb://` URI is a **client-side convention** the example clients parse; the
 > server speaks the raw binary protocol above (host + port + AUTH), it doesn't parse URIs itself.
+
+## Data types
+
+Beyond plain strings, PicoDB supports Redis-style **hashes**, **lists**, and **sets**. A key holds one type; using the wrong command on a key returns a `0xFF` (WRONGTYPE) error, and collections that become empty are deleted automatically.
+
+```python
+db = PicoDB.from_uri("picodb://:token@localhost:7120")
+
+# strings
+db.set("name", "alice", ttl=60);   db.get("name")            # b'alice'
+
+# hashes
+db.hset("user:1", "email", "a@x.com");  db.hget("user:1", "email")
+db.hgetall("user:1")                    # {b'email': b'a@x.com'}
+db.hlen("user:1");  db.hdel("user:1", "email")
+
+# lists
+db.rpush("queue", "a", "b", "c");  db.lpush("queue", "z")
+db.lrange("queue", 0, -1)               # [b'z', b'a', b'b', b'c']
+db.lpop("queue");  db.rpop("queue");  db.llen("queue")
+
+# sets
+db.sadd("tags", "x", "y", "x");    db.scard("tags")          # 2 (deduped)
+db.smembers("tags");  db.sismember("tags", "x");  db.srem("tags", "y")
+
+db.type("user:1")                       # 'hash' | 'list' | 'set' | 'string' | 'none'
+```
+
+| Type | Commands |
+|------|----------|
+| string | `SET` (TTL) · `GET` · `DEL` |
+| hash | `HSET` · `HGET` · `HDEL` · `HGETALL` · `HLEN` |
+| list | `LPUSH` · `RPUSH` · `LPOP` · `RPOP` · `LRANGE` · `LLEN` |
+| set | `SADD` · `SREM` · `SMEMBERS` · `SISMEMBER` · `SCARD` |
+| any | `TYPE` · `DEL` · `FLUSH` |
+
+The Node.js client (`examples/client.js`) exposes the same methods (`hset`, `rpush`, `sadd`, …).
 
 ## Authentication
 

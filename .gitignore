@@ -11,6 +11,14 @@
 *.out
 picodb.out
 
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Personal / secret-bearing launchers (never commit tokens)
+start_bot.sh
+examples/telegram_bot.py
+
 # Editor/OS noise
 *.swp
 .DS_Store

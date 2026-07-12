@@ -17,9 +17,22 @@ import struct
 from urllib.parse import urlsplit, unquote
 
 # Action bytes
-SET, GET, DEL, FLUSH, SUBSCRIBE, PUBLISH, AUTH = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
+SET, GET, DEL, FLUSH, SUBSCRIBE, PUBLISH, AUTH, TYPE = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+HSET, HGET, HDEL, HGETALL, HLEN = 0x10, 0x11, 0x12, 0x13, 0x14
+LPUSH, RPUSH, LPOP, RPOP, LRANGE, LLEN = 0x20, 0x21, 0x22, 0x23, 0x24, 0x25
+SADD, SREM, SMEMBERS, SISMEMBER, SCARD = 0x30, 0x31, 0x32, 0x33, 0x34
 # Response status bytes
 OK, MISSING, AUTH_FAIL, ERROR = 0x00, 0x44, 0x41, 0xFF
+
+
+def _pack_args(items):
+    """Pack args as [len u32 BE][bytes]… for compound commands."""
+    out = b""
+    for x in items:
+        if isinstance(x, str):
+            x = x.encode()
+        out += struct.pack(">I", len(x)) + bytes(x)
+    return out
 
 
 class PicoDBError(Exception):
@@ -101,6 +114,104 @@ class PicoDB:
         """Wipe all keys."""
         self.sock.sendall(self._frame(FLUSH))
         return self._status() == OK
+
+    def type(self, key):
+        """Return the value type: 'string' | 'hash' | 'list' | 'set' | 'none'."""
+        self.sock.sendall(self._frame(TYPE, key))
+        return self._read_bulk().decode()
+
+    # --- reply readers for the typed commands -------------------------------
+    def _read_int(self):
+        if self._status() != OK:
+            raise PicoDBError("server error")
+        return struct.unpack(">q", self._recvn(8))[0]
+
+    def _read_bulk(self):
+        st = self._status()
+        if st == MISSING:
+            return None
+        if st != OK:
+            raise PicoDBError("server error")
+        (length,) = struct.unpack(">I", self._recvn(4))
+        return self._recvn(length)
+
+    def _read_array(self):
+        if self._status() != OK:
+            raise PicoDBError("server error")
+        (count,) = struct.unpack(">I", self._recvn(4))
+        items = []
+        for _ in range(count):
+            (length,) = struct.unpack(">I", self._recvn(4))
+            items.append(self._recvn(length))
+        return items
+
+    # --- hashes -------------------------------------------------------------
+    def hset(self, key, field, value):
+        self.sock.sendall(self._frame(HSET, key, _pack_args([field, value])))
+        return self._read_int()
+
+    def hget(self, key, field):
+        self.sock.sendall(self._frame(HGET, key, _pack_args([field])))
+        return self._read_bulk()
+
+    def hdel(self, key, field):
+        self.sock.sendall(self._frame(HDEL, key, _pack_args([field])))
+        return self._read_int()
+
+    def hgetall(self, key):
+        self.sock.sendall(self._frame(HGETALL, key))
+        flat = self._read_array()
+        return {flat[i]: flat[i + 1] for i in range(0, len(flat), 2)}
+
+    def hlen(self, key):
+        self.sock.sendall(self._frame(HLEN, key))
+        return self._read_int()
+
+    # --- lists --------------------------------------------------------------
+    def lpush(self, key, *items):
+        self.sock.sendall(self._frame(LPUSH, key, _pack_args(items)))
+        return self._read_int()
+
+    def rpush(self, key, *items):
+        self.sock.sendall(self._frame(RPUSH, key, _pack_args(items)))
+        return self._read_int()
+
+    def lpop(self, key):
+        self.sock.sendall(self._frame(LPOP, key))
+        return self._read_bulk()
+
+    def rpop(self, key):
+        self.sock.sendall(self._frame(RPOP, key))
+        return self._read_bulk()
+
+    def lrange(self, key, start, stop):
+        self.sock.sendall(self._frame(LRANGE, key, struct.pack(">qq", start, stop)))
+        return self._read_array()
+
+    def llen(self, key):
+        self.sock.sendall(self._frame(LLEN, key))
+        return self._read_int()
+
+    # --- sets ---------------------------------------------------------------
+    def sadd(self, key, *members):
+        self.sock.sendall(self._frame(SADD, key, _pack_args(members)))
+        return self._read_int()
+
+    def srem(self, key, *members):
+        self.sock.sendall(self._frame(SREM, key, _pack_args(members)))
+        return self._read_int()
+
+    def smembers(self, key):
+        self.sock.sendall(self._frame(SMEMBERS, key))
+        return set(self._read_array())
+
+    def sismember(self, key, member):
+        self.sock.sendall(self._frame(SISMEMBER, key, _pack_args([member])))
+        return self._read_int() == 1
+
+    def scard(self, key):
+        self.sock.sendall(self._frame(SCARD, key))
+        return self._read_int()
 
     def publish(self, channel, message):
         """Publish a message to a channel."""

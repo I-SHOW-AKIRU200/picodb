@@ -41,7 +41,7 @@
 //!  [0x00] | [Payload Length: 4 bytes, big-endian] | [Payload Data]
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -66,6 +66,29 @@ const ACT_FLUSH: u8 = 0x04;
 const ACT_SUBSCRIBE: u8 = 0x05;
 const ACT_PUBLISH: u8 = 0x06;
 const ACT_AUTH: u8 = 0x07; // authenticate: token carried in the key field, vlen=0
+const ACT_TYPE: u8 = 0x08; // report the value type of a key
+
+// Hash commands. value field = length-prefixed args: [len u32][bytes]…
+const ACT_HSET: u8 = 0x10; // args: field, value          -> int (1 new / 0 updated)
+const ACT_HGET: u8 = 0x11; // args: field                 -> bulk | missing
+const ACT_HDEL: u8 = 0x12; // args: field                 -> int (1 / 0)
+const ACT_HGETALL: u8 = 0x13; // (no args)                -> array [field, value]…
+const ACT_HLEN: u8 = 0x14; // (no args)                   -> int
+
+// List commands.
+const ACT_LPUSH: u8 = 0x20; // args: item…                -> int (new length)
+const ACT_RPUSH: u8 = 0x21; // args: item…                -> int (new length)
+const ACT_LPOP: u8 = 0x22; //  (no args)                  -> bulk | missing
+const ACT_RPOP: u8 = 0x23; //  (no args)                  -> bulk | missing
+const ACT_LRANGE: u8 = 0x24; // value = start i64 BE + stop i64 BE (16 bytes) -> array
+const ACT_LLEN: u8 = 0x25; //  (no args)                  -> int
+
+// Set commands.
+const ACT_SADD: u8 = 0x30; // args: member…               -> int (added count)
+const ACT_SREM: u8 = 0x31; // args: member…               -> int (removed count)
+const ACT_SMEMBERS: u8 = 0x32; // (no args)               -> array [member]…
+const ACT_SISMEMBER: u8 = 0x33; // args: member           -> int (0 / 1)
+const ACT_SCARD: u8 = 0x34; //  (no args)                 -> int
 
 // Response status bytes (offset 0 of every response frame).
 const RSP_OK: u8 = 0x00;
@@ -102,11 +125,60 @@ fn now_secs() -> u64 {
 // and `last_accessed` for lazy expiration and access tracking.
 // ===========================================================================
 
+/// A stored value — Redis-style data types, all held in-memory.
+enum Value {
+    Str(Vec<u8>),
+    Hash(HashMap<Vec<u8>, Vec<u8>>),
+    List(VecDeque<Vec<u8>>),
+    Set(HashSet<Vec<u8>>),
+}
+
+/// Per-element bookkeeping estimate for collection types (map/list/set node).
+const ELEM_OVERHEAD: usize = 24;
+
+impl Value {
+    /// Approximate heap bytes held by this value (payload + per-element overhead).
+    fn mem_size(&self) -> usize {
+        match self {
+            Value::Str(v) => v.len(),
+            Value::Hash(h) => h.iter().map(|(k, v)| k.len() + v.len() + ELEM_OVERHEAD).sum(),
+            Value::List(l) => l.iter().map(|v| v.len() + ELEM_OVERHEAD).sum(),
+            Value::Set(s) => s.iter().map(|v| v.len() + ELEM_OVERHEAD).sum(),
+        }
+    }
+    fn type_name(&self) -> &'static str {
+        match self {
+            Value::Str(_) => "string",
+            Value::Hash(_) => "hash",
+            Value::List(_) => "list",
+            Value::Set(_) => "set",
+        }
+    }
+    /// Element count (for display); for strings this is the byte length.
+    fn cardinality(&self) -> usize {
+        match self {
+            Value::Str(v) => v.len(),
+            Value::Hash(h) => h.len(),
+            Value::List(l) => l.len(),
+            Value::Set(s) => s.len(),
+        }
+    }
+    /// True for a collection that holds no elements (Redis deletes these).
+    fn is_empty_collection(&self) -> bool {
+        match self {
+            Value::Str(_) => false,
+            Value::Hash(h) => h.is_empty(),
+            Value::List(l) => l.is_empty(),
+            Value::Set(s) => s.is_empty(),
+        }
+    }
+}
+
 struct Node {
     key: Vec<u8>,
-    value: Vec<u8>,
+    value: Value,
     expires_at: Option<u64>, // UNIX seconds; None = persistent
-    last_accessed: u64,      // UNIX seconds of most recent GET/SET
+    last_accessed: u64,      // UNIX seconds of most recent access
     prev: Option<usize>,     // toward MRU (head)
     next: Option<usize>,     // toward LRU (tail)
 }
@@ -126,8 +198,8 @@ struct LruCache {
 const ENTRY_OVERHEAD: usize = 72;
 
 #[inline]
-fn entry_size(key: &[u8], value: &[u8]) -> usize {
-    key.len() + value.len() + ENTRY_OVERHEAD
+fn entry_size(key: &[u8], value: &Value) -> usize {
+    key.len() + value.mem_size() + ENTRY_OVERHEAD
 }
 
 impl LruCache {
@@ -219,79 +291,105 @@ impl LruCache {
         }
     }
 
-    /// Insert or update a key with an optional expiry, then evict from the LRU
-    /// end until back under the RAM cap. O(1) amortized.
-    fn set(&mut self, key: Vec<u8>, value: Vec<u8>, expires_at: Option<u64>, now: u64) {
-        if let Some(&idx) = self.map.get(&key) {
-            let old_sz = {
-                let n = self.nodes[idx].as_ref().unwrap();
-                entry_size(&n.key, &n.value)
-            };
-            let new_sz = {
-                let n = self.nodes[idx].as_mut().unwrap();
-                n.value = value;
-                n.expires_at = expires_at;
-                n.last_accessed = now;
-                entry_size(&n.key, &n.value)
-            };
-            self.used = self.used - old_sz + new_sz;
-            self.move_to_front(idx);
-        } else {
-            let sz = entry_size(&key, &value);
-            let idx = self.alloc(Node {
-                key: key.clone(),
-                value,
-                expires_at,
-                last_accessed: now,
-                prev: None,
-                next: None,
-            });
-            self.map.insert(key, idx);
-            self.used += sz;
-            self.push_front(idx);
-        }
-
-        // Enforce the ceiling. Keep at least the just-written entry even if a
-        // single value alone exceeds the cap (best-effort bound, never a panic).
+    /// Evict from the LRU tail until back under the RAM cap. Never evicts
+    /// `keep_idx` (the entry a command just touched, always MRU).
+    fn enforce_cap(&mut self, keep_idx: Option<usize>) {
         while self.used > self.cap && self.map.len() > 1 {
+            if self.tail == keep_idx {
+                break;
+            }
             if !self.evict_lru() {
                 break;
             }
         }
     }
 
-    /// Retrieve a value, applying **lazy expiration**: an expired key is dropped
-    /// instantly and treated as missing. On a live hit the entry is promoted to
-    /// MRU, `last_accessed` is updated, and the reply `[0x00] + value` is written
-    /// **directly into `out`** (no intermediate allocation / clone). Returns true
-    /// on hit so the caller can bump the hit/miss counters.
-    fn get_into(&mut self, key: &[u8], now: u64, out: &mut Vec<u8>) -> bool {
-        let Some(&idx) = self.map.get(key) else {
-            return false;
-        };
-        // Lazy expiration check (offset into node's expires_at).
+    /// SET: insert/replace a key as a string value with optional expiry.
+    fn set(&mut self, key: Vec<u8>, value: Value, expires_at: Option<u64>, now: u64) {
+        if let Some(&idx) = self.map.get(&key) {
+            let old_sz = self.node_size(idx);
+            {
+                let n = self.nodes[idx].as_mut().unwrap();
+                n.value = value;
+                n.expires_at = expires_at;
+                n.last_accessed = now;
+            }
+            let new_sz = self.node_size(idx);
+            self.used = self.used - old_sz + new_sz;
+            self.move_to_front(idx);
+            self.enforce_cap(Some(idx));
+        } else {
+            let idx = self.create(key, value, expires_at, now);
+            self.enforce_cap(Some(idx));
+        }
+    }
+
+    /// Create a brand-new key at the MRU position and return its slab index.
+    fn create(&mut self, key: Vec<u8>, value: Value, expires_at: Option<u64>, now: u64) -> usize {
+        let sz = entry_size(&key, &value);
+        let idx = self.alloc(Node {
+            key: key.clone(),
+            value,
+            expires_at,
+            last_accessed: now,
+            prev: None,
+            next: None,
+        });
+        self.map.insert(key, idx);
+        self.used += sz;
+        self.push_front(idx);
+        idx
+    }
+
+    /// Look up a live key: applies lazy expiration, and on a hit promotes it to
+    /// MRU and updates `last_accessed`. Returns the slab index, or None if the
+    /// key is absent or expired (expired keys are dropped here).
+    fn live_idx(&mut self, key: &[u8], now: u64) -> Option<usize> {
+        let &idx = self.map.get(key)?;
         if let Some(exp) = self.nodes[idx].as_ref().unwrap().expires_at {
             if exp <= now {
                 self.remove_idx(idx);
-                return false;
+                return None;
             }
         }
-        {
-            let n = self.nodes[idx].as_mut().unwrap();
-            n.last_accessed = now;
-            // Self-delimiting reply: [0x00][value len: u32 BE][value bytes].
-            // The length prefix lets a streaming client frame the value exactly
-            // (matches the pub/sub delivery frame format).
-            out.push(RSP_OK);
-            out.extend_from_slice(&(n.value.len() as u32).to_be_bytes());
-            out.extend_from_slice(&n.value);
-        }
+        self.nodes[idx].as_mut().unwrap().last_accessed = now;
         self.move_to_front(idx);
-        true
+        Some(idx)
     }
 
-    /// Explicitly remove a key. Returns true if it existed (expired counts as
-    /// missing and is cleaned up).
+    #[inline]
+    fn node_size(&self, idx: usize) -> usize {
+        let n = self.nodes[idx].as_ref().unwrap();
+        entry_size(&n.key, &n.value)
+    }
+    #[inline]
+    fn value_ref(&self, idx: usize) -> &Value {
+        &self.nodes[idx].as_ref().unwrap().value
+    }
+    #[inline]
+    fn value_mut(&mut self, idx: usize) -> &mut Value {
+        &mut self.nodes[idx].as_mut().unwrap().value
+    }
+
+    /// After mutating the value at `idx`, reconcile the byte counter against its
+    /// pre-mutation size (`old`). Drops the key if it became an empty collection;
+    /// otherwise enforces the RAM cap.
+    fn commit(&mut self, idx: usize, old: usize) {
+        if self.value_ref(idx).is_empty_collection() {
+            self.remove_idx(idx);
+            return;
+        }
+        let new = self.node_size(idx);
+        if new >= old {
+            self.used += new - old;
+        } else {
+            self.used = self.used.saturating_sub(old - new);
+        }
+        self.enforce_cap(Some(idx));
+    }
+
+    /// Explicitly remove a key (any type). Returns true if it existed and was
+    /// not already expired.
     fn del(&mut self, key: &[u8], now: u64) -> bool {
         let Some(&idx) = self.map.get(key) else {
             return false;
@@ -316,9 +414,9 @@ impl LruCache {
         self.used = 0;
     }
 
-    /// Snapshot for the dashboard: (key, value_size, ttl_remaining_seconds).
+    /// Snapshot for the dashboard: (key, type, size_bytes, element_count, ttl).
     /// Expired entries are skipped (but not removed here — that stays lazy).
-    fn snapshot(&self, now: u64) -> Vec<(Vec<u8>, usize, Option<u64>)> {
+    fn snapshot(&self, now: u64) -> Vec<(Vec<u8>, &'static str, usize, usize, Option<u64>)> {
         let mut out = Vec::with_capacity(self.map.len());
         for (key, &idx) in self.map.iter() {
             let n = self.nodes[idx].as_ref().unwrap();
@@ -327,7 +425,13 @@ impl LruCache {
                 Some(e) => Some(e - now),
                 None => None,
             };
-            out.push((key.clone(), n.value.len(), ttl));
+            out.push((
+                key.clone(),
+                n.value.type_name(),
+                n.value.mem_size(),
+                n.value.cardinality(),
+                ttl,
+            ));
         }
         out
     }
@@ -400,43 +504,336 @@ macro_rules! lock_or_recover {
 // Binary engine (port 7120)
 // ===========================================================================
 
+// --- reply encoders (all replies begin with RSP_OK unless missing/error) ----
+#[inline]
+fn reply_int(out: &mut Vec<u8>, n: i64) {
+    out.push(RSP_OK);
+    out.extend_from_slice(&n.to_be_bytes()); // [0x00][i64 BE]
+}
+#[inline]
+fn reply_bulk(out: &mut Vec<u8>, data: &[u8]) {
+    out.push(RSP_OK);
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes()); // [0x00][len u32][bytes]
+    out.extend_from_slice(data);
+}
+#[inline]
+fn arr_header(out: &mut Vec<u8>, count: u32) {
+    out.push(RSP_OK);
+    out.extend_from_slice(&count.to_be_bytes()); // [0x00][count u32] then count × item
+}
+#[inline]
+fn arr_item(out: &mut Vec<u8>, data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(data);
+}
+
+/// Split a value payload into length-prefixed args: [len u32 BE][bytes]…
+fn parse_args(mut v: &[u8]) -> Option<Vec<&[u8]>> {
+    let mut args = Vec::new();
+    while !v.is_empty() {
+        if v.len() < 4 {
+            return None;
+        }
+        let l = u32::from_be_bytes([v[0], v[1], v[2], v[3]]) as usize;
+        v = &v[4..];
+        if v.len() < l {
+            return None;
+        }
+        args.push(&v[..l]);
+        v = &v[l..];
+    }
+    Some(args)
+}
+
 /// Dispatch one decoded command, appending its reply bytes to `out`.
-/// Operates on borrowed key/value **slices** (only SET must copy, since it
-/// stores the data) and appends to a shared reply buffer so a whole pipelined
-/// batch is answered with a single socket write. SUBSCRIBE is handled by the
-/// caller since it hijacks the connection.
+/// Appends to a shared reply buffer so a whole pipelined batch is answered with
+/// a single socket write. SUBSCRIBE is handled by the caller (it hijacks the
+/// connection). WRONGTYPE / malformed args reply `0xFF`.
 fn apply_into(server: &Server, action: u8, key: &[u8], value: &[u8], ttl: u32, out: &mut Vec<u8>) {
     let now = now_secs();
+    let mut cache = lock_or_recover!(server.cache.write());
     match action {
+        // ---- strings ----
         ACT_SET => {
             let expires_at = if ttl > 0 { Some(now + ttl as u64) } else { None };
-            let mut cache = lock_or_recover!(server.cache.write());
-            cache.set(key.to_vec(), value.to_vec(), expires_at, now);
+            cache.set(key.to_vec(), Value::Str(value.to_vec()), expires_at, now);
             out.push(RSP_OK);
         }
-        ACT_GET => {
-            // GET mutates recency + may lazily expire, so it takes the write lock.
-            let mut cache = lock_or_recover!(server.cache.write());
-            if cache.get_into(key, now, out) {
-                server.hits.fetch_add(1, Ordering::Relaxed);
-            } else {
+        ACT_GET => match cache.live_idx(key, now) {
+            Some(idx) => match cache.value_ref(idx) {
+                Value::Str(s) => {
+                    server.hits.fetch_add(1, Ordering::Relaxed);
+                    reply_bulk(out, s);
+                }
+                _ => out.push(RSP_ERROR), // WRONGTYPE
+            },
+            None => {
                 server.misses.fetch_add(1, Ordering::Relaxed);
                 out.push(RSP_MISSING);
             }
-        }
-        ACT_DEL => {
-            let mut cache = lock_or_recover!(server.cache.write());
-            out.push(if cache.del(key, now) { RSP_OK } else { RSP_MISSING });
-        }
+        },
+        ACT_DEL => out.push(if cache.del(key, now) { RSP_OK } else { RSP_MISSING }),
         ACT_FLUSH => {
-            let mut cache = lock_or_recover!(server.cache.write());
             cache.flush();
             out.push(RSP_OK);
         }
+        ACT_TYPE => match cache.live_idx(key, now) {
+            Some(idx) => reply_bulk(out, cache.value_ref(idx).type_name().as_bytes()),
+            None => reply_bulk(out, b"none"),
+        },
+
+        // ---- hashes ----
+        ACT_HSET => {
+            let Some(args) = parse_args(value) else { return out.push(RSP_ERROR) };
+            if args.len() != 2 {
+                return out.push(RSP_ERROR);
+            }
+            let (field, val) = (args[0].to_vec(), args[1].to_vec());
+            let idx = match cache.live_idx(key, now) {
+                Some(i) => {
+                    if !matches!(cache.value_ref(i), Value::Hash(_)) {
+                        return out.push(RSP_ERROR);
+                    }
+                    i
+                }
+                None => cache.create(key.to_vec(), Value::Hash(HashMap::new()), None, now),
+            };
+            let old = cache.node_size(idx);
+            let is_new = match cache.value_mut(idx) {
+                Value::Hash(h) => h.insert(field, val).is_none(),
+                _ => unreachable!(),
+            };
+            cache.commit(idx, old);
+            reply_int(out, is_new as i64);
+        }
+        ACT_HGET => {
+            let Some(args) = parse_args(value) else { return out.push(RSP_ERROR) };
+            if args.len() != 1 {
+                return out.push(RSP_ERROR);
+            }
+            match cache.live_idx(key, now) {
+                Some(idx) => match cache.value_ref(idx) {
+                    Value::Hash(h) => match h.get(args[0]) {
+                        Some(v) => reply_bulk(out, v),
+                        None => out.push(RSP_MISSING),
+                    },
+                    _ => out.push(RSP_ERROR),
+                },
+                None => out.push(RSP_MISSING),
+            }
+        }
+        ACT_HDEL => {
+            let Some(args) = parse_args(value) else { return out.push(RSP_ERROR) };
+            if args.len() != 1 {
+                return out.push(RSP_ERROR);
+            }
+            match cache.live_idx(key, now) {
+                Some(idx) => {
+                    if !matches!(cache.value_ref(idx), Value::Hash(_)) {
+                        return out.push(RSP_ERROR);
+                    }
+                    let old = cache.node_size(idx);
+                    let removed = match cache.value_mut(idx) {
+                        Value::Hash(h) => h.remove(args[0]).is_some(),
+                        _ => unreachable!(),
+                    };
+                    cache.commit(idx, old);
+                    reply_int(out, removed as i64);
+                }
+                None => reply_int(out, 0),
+            }
+        }
+        ACT_HGETALL => match cache.live_idx(key, now) {
+            Some(idx) => match cache.value_ref(idx) {
+                Value::Hash(h) => {
+                    arr_header(out, (h.len() * 2) as u32);
+                    for (k, v) in h.iter() {
+                        arr_item(out, k);
+                        arr_item(out, v);
+                    }
+                }
+                _ => out.push(RSP_ERROR),
+            },
+            None => arr_header(out, 0),
+        },
+        ACT_HLEN => match cache.live_idx(key, now) {
+            Some(idx) => match cache.value_ref(idx) {
+                Value::Hash(h) => reply_int(out, h.len() as i64),
+                _ => out.push(RSP_ERROR),
+            },
+            None => reply_int(out, 0),
+        },
+
+        // ---- lists ----
+        ACT_LPUSH | ACT_RPUSH => {
+            let Some(args) = parse_args(value) else { return out.push(RSP_ERROR) };
+            if args.is_empty() {
+                return out.push(RSP_ERROR);
+            }
+            let idx = match cache.live_idx(key, now) {
+                Some(i) => {
+                    if !matches!(cache.value_ref(i), Value::List(_)) {
+                        return out.push(RSP_ERROR);
+                    }
+                    i
+                }
+                None => cache.create(key.to_vec(), Value::List(VecDeque::new()), None, now),
+            };
+            let old = cache.node_size(idx);
+            let len = match cache.value_mut(idx) {
+                Value::List(l) => {
+                    for a in &args {
+                        if action == ACT_LPUSH {
+                            l.push_front(a.to_vec());
+                        } else {
+                            l.push_back(a.to_vec());
+                        }
+                    }
+                    l.len()
+                }
+                _ => unreachable!(),
+            };
+            cache.commit(idx, old);
+            reply_int(out, len as i64);
+        }
+        ACT_LPOP | ACT_RPOP => match cache.live_idx(key, now) {
+            Some(idx) => {
+                if !matches!(cache.value_ref(idx), Value::List(_)) {
+                    return out.push(RSP_ERROR);
+                }
+                let old = cache.node_size(idx);
+                let popped = match cache.value_mut(idx) {
+                    Value::List(l) => {
+                        if action == ACT_LPOP {
+                            l.pop_front()
+                        } else {
+                            l.pop_back()
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                match popped {
+                    Some(v) => {
+                        reply_bulk(out, &v);
+                        cache.commit(idx, old); // drops the key if the list is now empty
+                    }
+                    None => out.push(RSP_MISSING),
+                }
+            }
+            None => out.push(RSP_MISSING),
+        },
+        ACT_LLEN => match cache.live_idx(key, now) {
+            Some(idx) => match cache.value_ref(idx) {
+                Value::List(l) => reply_int(out, l.len() as i64),
+                _ => out.push(RSP_ERROR),
+            },
+            None => reply_int(out, 0),
+        },
+        ACT_LRANGE => {
+            if value.len() != 16 {
+                return out.push(RSP_ERROR);
+            }
+            let start = i64::from_be_bytes(value[0..8].try_into().unwrap());
+            let stop = i64::from_be_bytes(value[8..16].try_into().unwrap());
+            match cache.live_idx(key, now) {
+                Some(idx) => match cache.value_ref(idx) {
+                    Value::List(l) => {
+                        let n = l.len() as i64;
+                        let s = if start < 0 { (n + start).max(0) } else { start.min(n) };
+                        let e = if stop < 0 { n + stop } else { stop }.min(n - 1);
+                        if s > e || s >= n {
+                            arr_header(out, 0);
+                        } else {
+                            let count = (e - s + 1) as usize;
+                            arr_header(out, count as u32);
+                            for item in l.iter().skip(s as usize).take(count) {
+                                arr_item(out, item);
+                            }
+                        }
+                    }
+                    _ => out.push(RSP_ERROR),
+                },
+                None => arr_header(out, 0),
+            }
+        }
+
+        // ---- sets ----
+        ACT_SADD | ACT_SREM => {
+            let Some(args) = parse_args(value) else { return out.push(RSP_ERROR) };
+            if args.is_empty() {
+                return out.push(RSP_ERROR);
+            }
+            if action == ACT_SREM {
+                match cache.live_idx(key, now) {
+                    Some(idx) => {
+                        if !matches!(cache.value_ref(idx), Value::Set(_)) {
+                            return out.push(RSP_ERROR);
+                        }
+                        let old = cache.node_size(idx);
+                        let removed = match cache.value_mut(idx) {
+                            Value::Set(s) => args.iter().filter(|a| s.remove(**a)).count(),
+                            _ => unreachable!(),
+                        };
+                        cache.commit(idx, old);
+                        reply_int(out, removed as i64);
+                    }
+                    None => reply_int(out, 0),
+                }
+            } else {
+                let idx = match cache.live_idx(key, now) {
+                    Some(i) => {
+                        if !matches!(cache.value_ref(i), Value::Set(_)) {
+                            return out.push(RSP_ERROR);
+                        }
+                        i
+                    }
+                    None => cache.create(key.to_vec(), Value::Set(HashSet::new()), None, now),
+                };
+                let old = cache.node_size(idx);
+                let added = match cache.value_mut(idx) {
+                    Value::Set(s) => args.iter().filter(|a| s.insert(a.to_vec())).count(),
+                    _ => unreachable!(),
+                };
+                cache.commit(idx, old);
+                reply_int(out, added as i64);
+            }
+        }
+        ACT_SISMEMBER => {
+            let Some(args) = parse_args(value) else { return out.push(RSP_ERROR) };
+            if args.len() != 1 {
+                return out.push(RSP_ERROR);
+            }
+            match cache.live_idx(key, now) {
+                Some(idx) => match cache.value_ref(idx) {
+                    Value::Set(s) => reply_int(out, s.contains(args[0]) as i64),
+                    _ => out.push(RSP_ERROR),
+                },
+                None => reply_int(out, 0),
+            }
+        }
+        ACT_SMEMBERS => match cache.live_idx(key, now) {
+            Some(idx) => match cache.value_ref(idx) {
+                Value::Set(s) => {
+                    arr_header(out, s.len() as u32);
+                    for m in s.iter() {
+                        arr_item(out, m);
+                    }
+                }
+                _ => out.push(RSP_ERROR),
+            },
+            None => arr_header(out, 0),
+        },
+        ACT_SCARD => match cache.live_idx(key, now) {
+            Some(idx) => match cache.value_ref(idx) {
+                Value::Set(s) => reply_int(out, s.len() as i64),
+                _ => out.push(RSP_ERROR),
+            },
+            None => reply_int(out, 0),
+        },
+
+        // ---- pub/sub (uses the subs registry, not the cache) ----
         ACT_PUBLISH => {
-            // Broadcast `value` to every live subscriber of channel `key`.
-            // Pruning is lazy: senders whose receiver has dropped fail to send
-            // and are retained-out here.
+            drop(cache); // release the cache lock; publish only touches subs
             let mut subs = lock_or_recover!(server.subs.lock());
             if let Some(list) = subs.get_mut(key) {
                 list.retain(|tx| tx.send(value.to_vec()).is_ok());
@@ -446,6 +843,7 @@ fn apply_into(server: &Server, action: u8, key: &[u8], value: &[u8], ttl: u32, o
             }
             out.push(RSP_OK);
         }
+
         _ => out.push(RSP_ERROR), // unknown action byte
     }
 }
@@ -831,13 +1229,15 @@ fn render_api_keys(server: &Server) -> String {
     s.push_str(&format!("\"hits\":{hits},"));
     s.push_str(&format!("\"misses\":{misses},"));
     s.push_str("\"keys\":[");
-    for (i, (key, size, ttl)) in entries.iter().enumerate() {
+    for (i, (key, ktype, size, count, ttl)) in entries.iter().enumerate() {
         if i > 0 {
             s.push(',');
         }
         s.push_str("{\"key\":\"");
         json_escape_into(&mut s, key);
-        s.push_str(&format!("\",\"size\":{size},\"ttl\":"));
+        s.push_str(&format!(
+            "\",\"type\":\"{ktype}\",\"size\":{size},\"count\":{count},\"ttl\":"
+        ));
         match ttl {
             Some(t) => s.push_str(&t.to_string()),
             None => s.push_str("null"),

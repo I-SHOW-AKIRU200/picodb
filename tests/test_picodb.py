@@ -69,6 +69,35 @@ time.sleep(0.2)
 ck("pub/sub delivery", sub.recv(65536) == b"\x00" + struct.pack(">I", 2) + b"hi")
 sub.close(); pub.close()
 
+# ---- data types (hash / list / set) ----
+HSET, HGET, HGETALL, HLEN = 0x10, 0x11, 0x13, 0x14
+LPUSH, RPUSH, LPOP, LRANGE, LLEN = 0x20, 0x21, 0x22, 0x24, 0x25
+SADD, SMEMBERS, SISMEMBER, SCARD = 0x30, 0x32, 0x33, 0x34
+def arg(*xs):
+    return b"".join(struct.pack(">I", len(x if isinstance(x, bytes) else x.encode())) +
+                    (x if isinstance(x, bytes) else x.encode()) for x in xs)
+def rint(s): assert recvn(s,1)==OK; return struct.unpack(">q", recvn(s,8))[0]
+def rbulk2(s):
+    st=recvn(s,1)
+    if st==MISS: return None
+    (ln,)=struct.unpack(">I", recvn(s,4)); return recvn(s,ln)
+def rarr(s):
+    assert recvn(s,1)==OK; (n,)=struct.unpack(">I", recvn(s,4))
+    return [recvn(s, struct.unpack(">I", recvn(s,4))[0]) for _ in range(n)]
+h = authed_conn(); h.sendall(bf(FLUSH)); h.recv(1)
+h.sendall(bf(HSET, b"hh", arg("f","v"))); ck("HSET", rint(h)==1)
+h.sendall(bf(HGET, b"hh", arg("f"))); ck("HGET", rbulk2(h)==b"v")
+h.sendall(bf(HLEN, b"hh")); ck("HLEN", rint(h)==1)
+h.sendall(bf(RPUSH, b"ll", arg("a","b"))); ck("RPUSH", rint(h)==2)
+h.sendall(bf(LPUSH, b"ll", arg("z"))); h.recv(9)
+h.sendall(bf(LRANGE, b"ll", struct.pack(">qq",0,-1))); ck("LRANGE", rarr(h)==[b"z",b"a",b"b"])
+h.sendall(bf(LPOP, b"ll")); ck("LPOP", rbulk2(h)==b"z")
+h.sendall(bf(SADD, b"ss", arg("x","y","x"))); ck("SADD dedup", rint(h)==2)
+h.sendall(bf(SISMEMBER, b"ss", arg("y"))); ck("SISMEMBER", rint(h)==1)
+h.sendall(bf(SCARD, b"ss")); ck("SCARD", rint(h)==2)
+h.sendall(bf(GET, b"hh")); ck("WRONGTYPE", recvn(h,1)==b"\xff")
+h.close()
+
 # ---- HTTP ----
 def http(p):
     req = urllib.request.Request(f"http://127.0.0.1:7121{p}")

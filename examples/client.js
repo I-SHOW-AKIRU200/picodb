@@ -10,8 +10,20 @@
 
 const net = require("net");
 
-const SET = 1, GET = 2, DEL = 3, FLUSH = 4, PUBLISH = 6, AUTH = 7;
+const SET = 1, GET = 2, DEL = 3, FLUSH = 4, PUBLISH = 6, AUTH = 7, TYPE = 8;
+const HSET = 0x10, HGET = 0x11, HDEL = 0x12, HGETALL = 0x13, HLEN = 0x14;
+const LPUSH = 0x20, RPUSH = 0x21, LPOP = 0x22, RPOP = 0x23, LRANGE = 0x24, LLEN = 0x25;
+const SADD = 0x30, SREM = 0x31, SMEMBERS = 0x32, SISMEMBER = 0x33, SCARD = 0x34;
 const OK = 0x00, MISSING = 0x44;
+
+// Pack args as [len u32 BE][bytes]… for compound commands.
+function packArgs(items) {
+  return Buffer.concat(items.map((x) => {
+    const b = Buffer.isBuffer(x) ? x : Buffer.from(String(x));
+    const h = Buffer.alloc(4); h.writeUInt32BE(b.length, 0);
+    return Buffer.concat([h, b]);
+  }));
+}
 
 function frame(action, key = Buffer.alloc(0), value = Buffer.alloc(0), ttl = 0) {
   key = Buffer.isBuffer(key) ? key : Buffer.from(key);
@@ -91,6 +103,34 @@ class PicoDB {
   async delete(key) { this.sock.write(frame(DEL, key)); return (await this._status()) === OK; }
   async flush()      { this.sock.write(frame(FLUSH));   return (await this._status()) === OK; }
   async publish(ch, msg) { this.sock.write(frame(PUBLISH, ch, msg)); return (await this._status()) === OK; }
+  async type(key)    { this.sock.write(frame(TYPE, key)); return (await this._readBulk()).toString(); }
+
+  // reply readers
+  async _readInt() { if ((await this._status()) !== OK) throw new Error("server error"); return Number((await this._read(8)).readBigInt64BE(0)); }
+  async _readBulk() { const st = await this._status(); if (st === MISSING) return null; if (st !== OK) throw new Error("server error"); const len = (await this._read(4)).readUInt32BE(0); return await this._read(len); }
+  async _readArray() { if ((await this._status()) !== OK) throw new Error("server error"); const n = (await this._read(4)).readUInt32BE(0); const out = []; for (let i = 0; i < n; i++) { const len = (await this._read(4)).readUInt32BE(0); out.push(await this._read(len)); } return out; }
+
+  // hashes
+  async hset(key, field, value) { this.sock.write(frame(HSET, key, packArgs([field, value]))); return this._readInt(); }
+  async hget(key, field) { this.sock.write(frame(HGET, key, packArgs([field]))); return this._readBulk(); }
+  async hdel(key, field) { this.sock.write(frame(HDEL, key, packArgs([field]))); return this._readInt(); }
+  async hgetall(key) { this.sock.write(frame(HGETALL, key)); const f = await this._readArray(); const o = {}; for (let i = 0; i < f.length; i += 2) o[f[i].toString()] = f[i + 1]; return o; }
+  async hlen(key) { this.sock.write(frame(HLEN, key)); return this._readInt(); }
+
+  // lists
+  async lpush(key, ...items) { this.sock.write(frame(LPUSH, key, packArgs(items))); return this._readInt(); }
+  async rpush(key, ...items) { this.sock.write(frame(RPUSH, key, packArgs(items))); return this._readInt(); }
+  async lpop(key) { this.sock.write(frame(LPOP, key)); return this._readBulk(); }
+  async rpop(key) { this.sock.write(frame(RPOP, key)); return this._readBulk(); }
+  async lrange(key, start, stop) { const b = Buffer.alloc(16); b.writeBigInt64BE(BigInt(start), 0); b.writeBigInt64BE(BigInt(stop), 8); this.sock.write(frame(LRANGE, key, b)); return this._readArray(); }
+  async llen(key) { this.sock.write(frame(LLEN, key)); return this._readInt(); }
+
+  // sets
+  async sadd(key, ...members) { this.sock.write(frame(SADD, key, packArgs(members))); return this._readInt(); }
+  async srem(key, ...members) { this.sock.write(frame(SREM, key, packArgs(members))); return this._readInt(); }
+  async smembers(key) { this.sock.write(frame(SMEMBERS, key)); return this._readArray(); }
+  async sismember(key, member) { this.sock.write(frame(SISMEMBER, key, packArgs([member]))); return (await this._readInt()) === 1; }
+  async scard(key) { this.sock.write(frame(SCARD, key)); return this._readInt(); }
 
   close() { this.sock.end(); }
 }

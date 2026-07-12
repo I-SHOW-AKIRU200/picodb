@@ -62,6 +62,10 @@
   .chip { padding: 2px 9px; border-radius: 999px; font-size: 12px; background: var(--chip); color: var(--muted); }
   .chip.live { color: var(--warn); }
   .chip.persist { color: var(--muted); }
+  .chip.type-string { color: #8aa0bd; }
+  .chip.type-hash { color: #4f8cff; }
+  .chip.type-list { color: #3fd07f; }
+  .chip.type-set { color: #ffb454; }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   footer { color: var(--muted); text-align: center; padding: 20px; font-size: 12px; }
   a { color: var(--accent); text-decoration: none; }
@@ -101,7 +105,7 @@
         <span class="chip" id="count">0 keys</span>
       </div>
       <table>
-        <thead><tr><th>Key</th><th>Size</th><th>TTL</th></tr></thead>
+        <thead><tr><th>Key</th><th>Type</th><th>Items</th><th>Size</th><th>TTL</th></tr></thead>
         <tbody id="rows"><tr><td class="empty" colspan="3">Loading…</td></tr></tbody>
       </table>
     </div>
@@ -181,7 +185,7 @@ function applyData(data) {
 
   const rows = $("rows");
   if (!data.keys.length) {
-    rows.innerHTML = '<tr><td class="empty" colspan="3">No keys in cache</td></tr>';
+    rows.innerHTML = '<tr><td class="empty" colspan="5">No keys in cache</td></tr>';
     return;
   }
   rows.innerHTML = "";
@@ -191,7 +195,11 @@ function applyData(data) {
     const ttlCell = (k.ttl === null || k.ttl === undefined)
       ? '<span class="chip persist">persistent</span>'
       : `<span class="chip live" data-key="${encodeURIComponent(k.key)}">${fmtDuration(k.ttl)}</span>`;
-    tr.innerHTML = `<td class="key">${escapeHtml(k.key)}</td><td>${fmtBytes(k.size)}</td><td>${ttlCell}</td>`;
+    const type = k.type || "string";
+    const items = (type === "string") ? "—" : (k.count ?? "—");
+    tr.innerHTML = `<td class="key">${escapeHtml(k.key)}</td>`
+      + `<td><span class="chip type-${type}">${type}</span></td>`
+      + `<td>${items}</td><td>${fmtBytes(k.size)}</td><td>${ttlCell}</td>`;
     rows.appendChild(tr);
   }
 }
