@@ -19,7 +19,7 @@
 - **Redis-style data types**: strings, **hashes**, **lists**, and **sets** — not just plain key/value.
 - **Batteries included**: TTL + O(1) LRU eviction, pub/sub, a live web dashboard, Prometheus `/metrics`, and token auth.
 
-> Not a full Redis replacement — no persistence, clustering, or rich data types. It's a fast, small, volatile cache with a real-time dashboard.
+> Not a full Redis replacement — no clustering or rich data types. It's a fast, small cache with AOF persistence and a real-time dashboard.
 
 ## Install
 
@@ -244,6 +244,11 @@ record from a crash mid-write is skipped cleanly on replay. AOF status is expose
 on `/metrics` (`picodb_aof_enabled`, `picodb_aof_size_bytes`,
 `picodb_aof_rewrites_total`) and in `/api/keys`.
 
+**Migration note (v0.5+).** New AOF files now start with a 5-byte magic header
+(`Pico1`). Old-format logs (no magic) are still read correctly — no migration
+step is needed. To benefit from the format validation, simply let a rewrite
+compact the log; the rewritten file will include the magic header.
+
 ## Configuration
 
 All runtime settings live in `.env` (copy from [`.env.example`](.env.example)) — no code changes needed, like `redis.conf`.
@@ -258,6 +263,7 @@ All runtime settings live in `.env` (copy from [`.env.example`](.env.example)) �
 | `PICODB_AOF_PATH` | *(unset)* | Append-only log path. Set → persistence on; unset → in-memory only. |
 | `PICODB_AOF_FSYNC` | `everysec` | Durability policy: `everysec` \| `always` \| `no`. |
 | `PICODB_AOF_REWRITE_MIN_BYTES` | `67108864` (64 MiB) | Min log size before an auto-compaction. |
+| `PICODB_AOF_REWRITE_MIN_INTERVAL_SECS` | `30` | Minimum seconds between manual rewrites (`POST /aof/rewrite`). Background auto-compaction is unaffected. |
 
 > Exposing publicly (`PICODB_BIND=0.0.0.0`)? Always set `PICODB_TOKEN`, open the port in your host/cloud firewall, and put TLS in front (reverse proxy) — traffic is otherwise plaintext.
 
